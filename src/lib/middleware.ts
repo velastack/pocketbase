@@ -486,7 +486,7 @@ export const handlePocketbase = (config: UserConfig) => {
 						return new Response(null, {
 							status: 302,
 							headers: {
-								location: `${resolvedConfig.auth.loginPath}?redirect=${encodeURIComponent(event.url.pathname)}`,
+								location: `${resolvedConfig.auth.loginPath}?redirect=${encodeURIComponent(event.url.pathname + event.url.search)}`,
 								'Set-Cookie': 'pb_auth=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT;'
 							}
 						});
@@ -569,7 +569,7 @@ export const handlePocketbase = (config: UserConfig) => {
 			if (res.status === 404) {
 				if (event.url.pathname === '/login' || event.url.pathname === '/signup') {
 					return new Response(
-						errorPage(404, 'Run <code>svsh enable auth</code> to create this page.'),
+						errorPage(404, 'Run <code>vela enable auth</code> to create this page.'),
 						{
 							status: 404,
 							headers: {
@@ -581,7 +581,7 @@ export const handlePocketbase = (config: UserConfig) => {
 
 				if (event.url.pathname === '/privacy') {
 					return new Response(
-						errorPage(404, 'Run <code>svsh legal privacy</code> to create this page.'),
+						errorPage(404, 'Run <code>vela legal privacy</code> to create this page.'),
 						{
 							status: 404,
 							headers: {
@@ -593,7 +593,7 @@ export const handlePocketbase = (config: UserConfig) => {
 
 				if (event.url.pathname === '/terms') {
 					return new Response(
-						errorPage(404, 'Run <code>svsh legal terms</code> to create this page.'),
+						errorPage(404, 'Run <code>vela legal terms</code> to create this page.'),
 						{
 							status: 404,
 							headers: {
