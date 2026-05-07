@@ -102,7 +102,16 @@ let apiKeyCache: Record<string, { userId: string; keyId: string; token: string }
 
 const handleAdmin = async (config: Config, { event }: { event: RequestEvent }) => {
 	const isDevMode = process.env.NODE_ENV === 'development';
-	const strippedPath = event.url.pathname.substring(config.adminPath.length);
+	let strippedPath = event.url.pathname.substring(config.adminPath.length);
+
+	if (strippedPath === '/_') {
+		strippedPath = '/_/';
+	}
+
+	if (/^\/(assets|libs|fonts|images)(\/|$)/.test(strippedPath)) {
+		strippedPath = '/_' + strippedPath;
+	}
+
 	const urlPath = `${config.pocketbaseUrl}${strippedPath ? strippedPath : '/'}${event.url.search}`;
 
 	// Handle refresh token
@@ -274,12 +283,12 @@ export const handlePocketbase = (config: UserConfig) => {
 			if (
 				event.url.pathname === resolvedConfig.adminPath ||
 				event.url.pathname === `${resolvedConfig.adminPath}/` ||
-				event.url.pathname === `${resolvedConfig.adminPath}/_`
+				event.url.pathname === `${resolvedConfig.adminPath}/_/`
 			) {
 				return new Response(null, {
 					status: 302,
 					headers: {
-						location: `${resolvedConfig.adminPath}/_/`
+						location: `${resolvedConfig.adminPath}/_`
 					}
 				});
 			}
