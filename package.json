@@ -1,6 +1,6 @@
 {
 	"name": "@velastack/pocketbase",
-	"version": "0.0.52",
+	"version": "0.0.53",
 	"description": "PocketBase bindings for SvelteKit: a hooks.server.ts middleware, type-safe collection schemas, and dev-time type sync.",
 	"license": "MIT",
 	"repository": {
@@ -53,8 +53,8 @@
 		"argon2": "^0.44.0",
 		"cross-spawn": "^7.0.6",
 		"package-manager-detector": "^1.6.0",
-		"pocketbase-server": "^0.37.5",
-		"pocketbase-sveltekit": "^0.26.8",
+		"pocketbase-server": "^0.39.11",
+		"pocketbase-sveltekit": "^0.28.0",
 		"supertest": "^7.2.2",
 		"sveltekit-superforms": "^2.30.1",
 		"ts-morph": "^26.0.0"
