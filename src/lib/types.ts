@@ -4,7 +4,7 @@ import PocketbaseSvelte, {
 	type CommonOptions
 } from 'pocketbase-sveltekit';
 
-import { type Agent } from 'supertest';
+import type { Agent } from 'supertest';
 
 // This is generated and written to .svelte-kit/types/pocketbase/$types.d.ts
 // @ts-ignore
@@ -50,10 +50,6 @@ declare global {
 			};
 		}
 	}
-}
-
-declare module '$env/dynamic/private' {
-	export const POCKETBASE_URL: string;
 }
 
 type StripGroups<S extends string> =

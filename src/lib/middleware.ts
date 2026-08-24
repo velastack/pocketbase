@@ -63,7 +63,12 @@ const DEFAULT_FILES_CONFIG = {
 };
 
 type UserConfig = {
-	pocketbaseUrl: string;
+	/**
+	 * Required, but typed as possibly undefined: it normally comes from an env var
+	 * the CLI injects at runtime, which no caller can promise at compile time.
+	 * Absent at startup is a clear throw, not a type error at every call site.
+	 */
+	pocketbaseUrl: string | undefined;
 	adminPath?: string;
 	superuserEmail?: string | null;
 	superuserPassword?: string | null;
@@ -84,7 +89,6 @@ type Config = {
 };
 
 const DEFAULT_CONFIG = {
-	pocketbaseUrl: null,
 	adminPath: '/admin'
 };
 
@@ -255,17 +259,20 @@ export const handlePocketbase = (config: UserConfig) => {
 		apiKeys: resolvedApiKeys
 	} satisfies ApiConfig;
 	const resolvedFiles = { ...DEFAULT_FILES_CONFIG, ...config.files } satisfies FilesConfig;
+
+	const { pocketbaseUrl } = config;
+	if (!pocketbaseUrl) {
+		throw new Error('PocketBase URL is not set, check src/hooks.server.ts');
+	}
+
 	const resolvedConfig = {
 		...DEFAULT_CONFIG,
 		...config,
+		pocketbaseUrl,
 		auth: resolvedAuth,
 		api: resolvedApi,
 		files: resolvedFiles
 	} satisfies Config;
-
-	if (!resolvedConfig.pocketbaseUrl) {
-		throw new Error('PocketBase URL is not set, check src/hooks.server.ts');
-	}
 
 	if (!resolvedConfig.superuserEmail && !resolvedConfig.superuserPassword) {
 		console.warn(
