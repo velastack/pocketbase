@@ -1,10 +1,9 @@
 import type { Handle, RequestEvent } from '@sveltejs/kit';
 import PocketBase, { SvelteKitAuthStore, type RecordModel } from 'pocketbase-sveltekit';
 import { resolve } from 'node:path';
-import argon2 from 'argon2';
+import { verifyApiKey } from './api-key.js';
 import { authRefresh } from './auth-refresh.js';
 import { proxy } from './proxy.js';
-import { processTypes } from './process-types.js';
 
 type UserAuthConfig = {
 	protectedRoutes?: string[] | null;
@@ -141,6 +140,11 @@ const handleAdmin = async (config: Config, { event }: { event: RequestEvent }) =
 			if (strippedPath === '/api/collections' || /^\/api\/collections\/[^/]+$/.test(strippedPath)) {
 				if (config.superuserEmail && config.superuserPassword) {
 					tablesCache.clear();
+					// Imported lazily: ts-morph bundles the whole TypeScript compiler, which relies on
+					// `__filename`/`__dirname`. Keeping it out of the module graph stops bundlers from
+					// inlining it into the ESM server chunk of a production build, where those globals
+					// do not exist. Type sync only ever runs in dev.
+					const { processTypes } = await import('./process-types.js');
 					await processTypes(
 						{
 							pocketbaseUrl: config.pocketbaseUrl,
@@ -209,7 +213,7 @@ const authorizeApiKey = async (
 		throw new Error('API key is not valid');
 	}
 
-	const isMatch = await argon2.verify(record.key_hash, keySecret);
+	const isMatch = verifyApiKey(record.key_hash, keySecret);
 
 	if (!isMatch) {
 		throw new Error('API key is not valid');
@@ -531,7 +535,7 @@ export const handlePocketbase = (config: UserConfig) => {
 			}
 
 			// Update last_used but don't wait for it
-			admin.collection('api_keys').update(keyId, {
+			admin.collection(resolvedConfig.api.apiKeys.collection).update(keyId, {
 				last_used: new Date().toISOString()
 			});
 

@@ -64,12 +64,38 @@ api: {
 	enabled?: boolean; // default: false — when false, only the admin path is proxied
 	apiKeys?: {
 		enabled?: boolean;    // default: false
-		collection?: string;  // default: 'api_keys' — must contain `key_hash` (argon2) and `user`
+		collection?: string;  // default: 'api_keys' — must contain `key_hash` (SHA-256) and `user`
 	};
 }
 ```
 
 When `api.enabled` is `true`, PocketBase API routes (`/api/batch`, `/api/collections`, `/api/realtime`, `/api/files`, `/api/settings`, `/api/logs`, `/api/crons`, `/api/backups`, `/api/health`) are proxied through SvelteKit. When `apiKeys.enabled` is also `true`, requests with `Authorization: Bearer <keyId>.<secret>` are authenticated against the configured collection and rewritten to an impersonated user token.
+
+#### Key hashing
+
+`key_hash` stores `sha256$<base64url>`. The secret half of an API key is a 128-bit random
+token rather than a user-chosen password, so a single SHA-256 is the appropriate primitive —
+there is no dictionary to attack, and a memory-hard KDF would only add a native dependency
+and per-request latency.
+
+`vela enable api-keys` scaffolds key creation for you. To issue keys yourself, use the
+exported helpers so the stored format stays in sync with verification:
+
+```ts
+import { generateApiKeySecret, hashApiKey } from '@velastack/pocketbase';
+
+const keySecret = generateApiKeySecret();
+const record = await pb
+	.collection('api_keys')
+	.create({ key_hash: hashApiKey(keySecret), user: userId, label });
+
+// Show this to the user once — it is not recoverable from `key_hash`.
+const apiKey = `${record.id}.${keySecret}`;
+```
+
+> **Breaking change in 0.1.0.** Earlier versions stored argon2id hashes. Those no longer
+> validate, and there is no migration path because the plaintext secret cannot be recovered
+> from an argon2 digest. Existing API keys must be regenerated.
 
 ### `files`
 
