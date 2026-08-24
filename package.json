@@ -55,8 +55,7 @@
 		"package-manager-detector": "^1.6.0",
 		"pocketbase-server": "^0.39.11",
 		"pocketbase-sveltekit": "^0.28.0",
-		"supertest": "^7.2.2",
-		"sveltekit-superforms": "^2.30.1",
+		"sveltekit-superforms": "^2.30.2",
 		"ts-morph": "^26.0.0"
 	},
 	"devDependencies": {
@@ -68,6 +67,7 @@
 		"prettier": "^3.4.2",
 		"prettier-plugin-svelte": "^3.3.3",
 		"publint": "^0.3.2",
+		"supertest": "^7.2.2",
 		"svelte": "^5.55.4",
 		"svelte-check": "^4.4.6",
 		"typescript": "^5.9.3",
