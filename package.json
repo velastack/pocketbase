@@ -1,7 +1,7 @@
 {
 	"name": "@velastack/pocketbase",
-	"version": "0.1.0",
-	"description": "PocketBase bindings for SvelteKit: a hooks.server.ts middleware, type-safe collection schemas, and dev-time type sync.",
+	"version": "0.2.0",
+	"description": "PocketBase bindings for SvelteKit: a hooks.server.ts middleware and type-safe collection schemas.",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
@@ -11,66 +11,70 @@
 	"bugs": {
 		"url": "https://github.com/velastack/pocketbase/issues"
 	},
+	"type": "module",
+	"engines": {
+		"node": ">=20"
+	},
 	"scripts": {
-		"dev": "vite dev",
-		"build": "vite build && npm run prepack",
-		"preview": "vite preview",
-		"prepare": "svelte-kit sync || echo ''",
-		"prepack": "svelte-kit sync && svelte-package && publint",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"build": "rm -rf dist && tsc -p tsconfig.build.json",
+		"check": "tsc --noEmit",
+		"test": "vitest run",
+		"test:watch": "vitest",
 		"format": "prettier --write .",
 		"lint": "prettier --check .",
-		"test": "vitest run",
-		"test:watch": "vitest"
+		"prepack": "npm run build && publint"
 	},
 	"files": [
-		"index.d.ts",
 		"dist",
 		"!dist/**/*.test.*",
 		"!dist/**/*.spec.*"
 	],
-	"sideEffects": [
-		"**/*.css"
-	],
-	"types": "./index.d.ts",
-	"type": "module",
+	"sideEffects": false,
+	"types": "./dist/index.d.ts",
 	"exports": {
 		".": {
-			"types": "./index.d.ts",
-			"node": "./dist/index.js"
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
 		},
-		"./internal": {
-			"types": "./dist/internal.d.ts",
-			"node": "./dist/internal.js"
+		"./api-key": {
+			"types": "./dist/api-key.d.ts",
+			"default": "./dist/api-key.js"
+		},
+		"./form": {
+			"types": "./dist/form.d.ts",
+			"default": "./dist/form.js"
+		},
+		"./testing": {
+			"types": "./dist/testing.d.ts",
+			"default": "./dist/testing.js"
 		}
 	},
-	"peerDependencies": {
-		"svelte": "^5.0.0"
-	},
 	"dependencies": {
-		"@types/supertest": "^6.0.3",
-		"cross-spawn": "^7.0.6",
-		"package-manager-detector": "^1.6.0",
-		"pocketbase-server": "^0.39.11",
+		"@velastack/kit": "^0.1.0"
+	},
+	"peerDependencies": {
+		"@sveltejs/kit": "^2.0.0",
+		"@types/supertest": "^6.0.0",
 		"pocketbase-sveltekit": "^0.28.0",
-		"sveltekit-superforms": "^2.30.2",
-		"ts-morph": "^26.0.0"
+		"sveltekit-superforms": "^2.0.0"
+	},
+	"peerDependenciesMeta": {
+		"@types/supertest": {
+			"optional": true
+		},
+		"sveltekit-superforms": {
+			"optional": true
+		}
 	},
 	"devDependencies": {
-		"@sveltejs/adapter-auto": "^7.0.0",
 		"@sveltejs/kit": "^2.57.1",
-		"@sveltejs/package": "^2.5.7",
-		"@sveltejs/vite-plugin-svelte": "^7.0.0",
-		"@types/cross-spawn": "^6.0.6",
+		"@types/node": "^22.0.0",
+		"@types/supertest": "^6.0.3",
+		"pocketbase-sveltekit": "^0.28.0",
 		"prettier": "^3.4.2",
-		"prettier-plugin-svelte": "^3.3.3",
 		"publint": "^0.3.2",
-		"supertest": "^7.2.2",
-		"svelte": "^5.55.4",
-		"svelte-check": "^4.4.6",
+		"sveltekit-superforms": "^2.30.2",
 		"typescript": "^5.9.3",
-		"vite": "^8.0.10",
 		"vitest": "^4.1.5"
 	},
 	"keywords": [

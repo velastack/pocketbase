@@ -1,9 +1,11 @@
 import type { Handle, RequestEvent } from '@sveltejs/kit';
 import PocketBase, { SvelteKitAuthStore, type RecordModel } from 'pocketbase-sveltekit';
 import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { unlink } from 'node:fs/promises';
+import { proxy, errorPage, protectedRouteRedirect } from '@velastack/kit';
 import { verifyApiKey } from './api-key.js';
 import { authRefresh } from './auth-refresh.js';
-import { proxy } from './proxy.js';
 
 type UserAuthConfig = {
 	protectedRoutes?: string[] | null;
@@ -95,15 +97,28 @@ type HandleConfig = Handle & {
 	config: Config;
 };
 
-let adminCookie: string | null = null;
+/**
+ * Per-`handlePocketbase()` state. These were module-level, which meant two
+ * hooks in one process silently shared a superuser cookie and an API-key table.
+ */
+type Caches = {
+	adminCookie: string | null;
+	meta: any;
+	tables: Set<string>;
+	apiKeys: Record<string, { userId: string; keyId: string; token: string }>;
+};
 
-// Caches
-let metaCache: any = null;
-let tablesCache: Set<string> = new Set();
+const createCaches = (): Caches => ({
+	adminCookie: null,
+	meta: null,
+	tables: new Set(),
+	apiKeys: {}
+});
 
-let apiKeyCache: Record<string, { userId: string; keyId: string; token: string }> = {};
-
-const handleAdmin = async (config: Config, { event }: { event: RequestEvent }) => {
+const handleAdmin = async (
+	config: Config,
+	{ event, caches }: { event: RequestEvent; caches: Caches }
+) => {
 	const isDevMode = process.env.NODE_ENV === 'development';
 	let strippedPath = event.url.pathname.substring(config.adminPath.length);
 
@@ -125,12 +140,21 @@ const handleAdmin = async (config: Config, { event }: { event: RequestEvent }) =
 	// TODO: generalize this cache busting
 	// clear cached meta on settings patch
 	if (strippedPath === '/api/settings' && event.request.method === 'PATCH') {
-		metaCache = null;
+		caches.meta = null;
 	}
 
 	const res = await proxy(urlPath, event);
 
-	// Rebuild types on collection create, update, or delete
+	// Invalidate generated types on collection create, update, or delete.
+	//
+	// This deletes the file rather than regenerating it: codegen needs ts-morph,
+	// which bundles the whole TypeScript compiler and relies on __filename, so it
+	// must not be reachable from a production server bundle. `vela dev` already
+	// watches this path and regenerates on unlink.
+	//
+	// Guarded on vela's dev metadata file, because without that watcher running
+	// there is nothing to regenerate — deleting would strip Models/Collections/
+	// Schemas from the app with no way back.
 	if (isDevMode) {
 		if (
 			event.request.method === 'POST' ||
@@ -138,22 +162,17 @@ const handleAdmin = async (config: Config, { event }: { event: RequestEvent }) =
 			event.request.method === 'DELETE'
 		) {
 			if (strippedPath === '/api/collections' || /^\/api\/collections\/[^/]+$/.test(strippedPath)) {
-				if (config.superuserEmail && config.superuserPassword) {
-					tablesCache.clear();
-					// Imported lazily: ts-morph bundles the whole TypeScript compiler, which relies on
-					// `__filename`/`__dirname`. Keeping it out of the module graph stops bundlers from
-					// inlining it into the ESM server chunk of a production build, where those globals
-					// do not exist. Type sync only ever runs in dev.
-					const { processTypes } = await import('./process-types.js');
-					await processTypes(
-						{
-							pocketbaseUrl: config.pocketbaseUrl,
-							superuserEmail: config.superuserEmail,
-							superuserPassword: config.superuserPassword
-						},
-						resolve(config.root ?? process.cwd(), '.svelte-kit', 'types')
+				caches.tables.clear();
+
+				const root = config.root ?? process.cwd();
+				const watcherRunning = existsSync(
+					resolve(root, 'node_modules', '.vite', '_pocketbase_metadata.json')
+				);
+
+				if (watcherRunning) {
+					await unlink(resolve(root, '.svelte-kit', 'types', 'pocketbase', '$types.d.ts')).catch(
+						() => {}
 					);
-					console.log('Synced types');
 				}
 			}
 		}
@@ -178,7 +197,7 @@ const handleApi = async (config: Config, { event }: { event: RequestEvent }) => 
 
 const parseApiKeyHeader = (header: string) => {
 	const [type, key] = header.split(' ');
-	if (type !== 'Bearer') {
+	if (type !== 'Bearer' || !key) {
 		throw new Error('API key is not set');
 	}
 
@@ -192,7 +211,7 @@ const parseApiKeyHeader = (header: string) => {
 
 const authorizeApiKey = async (
 	config: Config,
-	{ event, pb }: { event: RequestEvent; pb: PocketBase }
+	{ event, pb, caches }: { event: RequestEvent; pb: PocketBase; caches: Caches }
 ): Promise<{ userId: string; keyId: string; token: string }> => {
 	const header = event.request.headers.get('Authorization');
 	if (!header) {
@@ -201,9 +220,9 @@ const authorizeApiKey = async (
 
 	const { keyId, keySecret } = parseApiKeyHeader(header);
 
-	if (apiKeyCache[keyId]) {
+	if (caches.apiKeys[keyId]) {
 		// TODO: check if the key is expired
-		return apiKeyCache[keyId];
+		return caches.apiKeys[keyId];
 	}
 
 	const collection = pb.collection(config.api.apiKeys.collection);
@@ -230,7 +249,7 @@ const authorizeApiKey = async (
 		.impersonate(userId, 3600, { fetch: event.fetch });
 	const token = impersonateClient.authStore.token;
 
-	apiKeyCache[keyId] = { userId, keyId, token };
+	caches.apiKeys[keyId] = { userId, keyId, token };
 	return { userId, keyId, token };
 };
 
@@ -251,6 +270,7 @@ const isPocketbaseApiRoute = (pathname: string) => {
 };
 
 export const handlePocketbase = (config: UserConfig) => {
+	const caches = createCaches();
 	const isDevMode = process.env.NODE_ENV === 'development';
 	const resolvedAuth = { ...DEFAULT_AUTH_CONFIG, ...config.auth } satisfies AuthConfig;
 	const resolvedApiKeys = {
@@ -303,7 +323,7 @@ export const handlePocketbase = (config: UserConfig) => {
 					}
 				});
 			}
-			return await handleAdmin(resolvedConfig, { event });
+			return await handleAdmin(resolvedConfig, { event, caches });
 		}
 
 		// We can handle files before auth because we don't need to check if the user is authenticated
@@ -352,8 +372,8 @@ export const handlePocketbase = (config: UserConfig) => {
 		if (resolvedConfig.superuserEmail && resolvedConfig.superuserPassword) {
 			let needsAuth = false;
 
-			if (adminCookie) {
-				admin.authStore.loadFromCookie(adminCookie);
+			if (caches.adminCookie) {
+				admin.authStore.loadFromCookie(caches.adminCookie);
 				if (!admin.authStore.isValid) {
 					try {
 						await admin.collection('_superusers').authRefresh();
@@ -377,15 +397,15 @@ export const handlePocketbase = (config: UserConfig) => {
 					console.log('handlePocketbase: error authenticating superuser', e);
 				}
 
-				adminCookie = admin.authStore.exportToCookie();
+				caches.adminCookie = admin.authStore.exportToCookie();
 			}
 		}
 
 		// Load the tables cache
-		if (!tablesCache.size) {
+		if (!caches.tables.size) {
 			try {
 				const tables = await admin.collections.getFullList();
-				tablesCache = new Set(tables.map((table) => table.name));
+				caches.tables = new Set(tables.map((table) => table.name));
 			} catch {}
 		}
 
@@ -499,21 +519,15 @@ export const handlePocketbase = (config: UserConfig) => {
 		}
 
 		// Handle protected routes
-		if (resolvedConfig.auth?.protectedRoutes) {
-			for (const route of resolvedConfig.auth.protectedRoutes) {
-				if (event.route.id?.startsWith(route)) {
-					if (!pb.authStore.isValid) {
-						return new Response(null, {
-							status: 302,
-							headers: {
-								location: `${resolvedConfig.auth.loginPath}?redirect=${encodeURIComponent(event.url.pathname + event.url.search)}`,
-								'Set-Cookie': 'pb_auth=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT;'
-							}
-						});
-					}
-				}
-			}
-		}
+		const redirect = protectedRouteRedirect({
+			routeId: event.route.id,
+			url: event.url,
+			protectedRoutes: resolvedConfig.auth.protectedRoutes,
+			loginPath: resolvedConfig.auth.loginPath,
+			authenticated: pb.authStore.isValid,
+			clearCookies: ['pb_auth']
+		});
+		if (redirect) return redirect;
 
 		// Handle API key requests after setting up the admin client
 		if (
@@ -526,7 +540,7 @@ export const handlePocketbase = (config: UserConfig) => {
 
 			// Authenticate the user and create the necessary headers for the API request
 			try {
-				const result = await authorizeApiKey(resolvedConfig, { event, pb: admin });
+				const result = await authorizeApiKey(resolvedConfig, { event, pb: admin, caches });
 				token = result.token;
 				keyId = result.keyId;
 			} catch {
@@ -543,13 +557,13 @@ export const handlePocketbase = (config: UserConfig) => {
 			return await handleApi(resolvedConfig, { event });
 		}
 
-		if (!metaCache) {
+		if (!caches.meta) {
 			const settings = await admin.settings.getAll();
-			metaCache = settings['meta'];
+			caches.meta = settings['meta'];
 		}
 
 		// Load team if we have a team cookie and the teams table
-		if (tablesCache.has('teams') && pb.authStore.isValid) {
+		if (caches.tables.has('teams') && pb.authStore.isValid) {
 			if (event.request.headers.get('cookie')?.includes('team')) {
 				const teamCookie = event.request.headers
 					.get('cookie')
@@ -575,7 +589,7 @@ export const handlePocketbase = (config: UserConfig) => {
 		// @ts-ignore
 		event.locals.admin = admin;
 		// @ts-ignore
-		event.locals.meta = metaCache;
+		event.locals.meta = caches.meta;
 
 		// Handle all other requests
 		const res = await resolve(event);
@@ -632,100 +646,3 @@ export const handlePocketbase = (config: UserConfig) => {
 
 	return handle;
 };
-
-const errorPage = (status: number, message: string) => `
-<!doctype html>
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<title>${status}</title>
-
-		<style>
-			body {
-				--bg: white;
-				--fg: #222;
-				--divider: #ccc;
-				background: var(--bg);
-				color: var(--fg);
-				font-family:
-					system-ui,
-					-apple-system,
-					BlinkMacSystemFont,
-					'Segoe UI',
-					Roboto,
-					Oxygen,
-					Ubuntu,
-					Cantarell,
-					'Open Sans',
-					'Helvetica Neue',
-					sans-serif;
-				display: flex;
-				align-items: center;
-				justify-content: center;
-				height: 100vh;
-				margin: 0;
-			}
-
-			.error {
-				display: flex;
-				align-items: center;
-				max-width: 32rem;
-				margin: 0 1rem;
-			}
-
-			.status {
-				font-weight: 200;
-				font-size: 3rem;
-				line-height: 1;
-				position: relative;
-				top: -0.05rem;
-			}
-
-			.message {
-				border-left: 1px solid var(--divider);
-				padding: 0 0 0 1rem;
-				margin: 0 0 0 1rem;
-				min-height: 2.5rem;
-				display: flex;
-				align-items: center;
-			}
-
-			.message h1 {
-				font-weight: 400;
-				font-size: 1em;
-				margin: 0;
-			}
-
-			@media (prefers-color-scheme: dark) {
-				body {
-					--bg: #222;
-					--fg: #ddd;
-					--divider: #666;
-				}
-			}
-
-			code {
-				background: #f4f4f4;
-				padding: 0.2em 0.4em;
-				border-radius: 3px;
-				font-size: 0.9em;
-				font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
-			}
-
-			@media (prefers-color-scheme: dark) {
-				code {
-					background: #333;
-				}
-			}
-		</style>
-	</head>
-	<body>
-		<div class="error">
-			<span class="status">${status}</span>
-			<div class="message">
-				<h1>${message}</h1>
-			</div>
-		</div>
-	</body>
-</html>
-`;

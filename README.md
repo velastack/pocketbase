@@ -82,7 +82,7 @@ and per-request latency.
 exported helpers so the stored format stays in sync with verification:
 
 ```ts
-import { generateApiKeySecret, hashApiKey } from '@velastack/pocketbase';
+import { generateApiKeySecret, hashApiKey } from '@velastack/pocketbase/api-key';
 
 const keySecret = generateApiKeySecret();
 const record = await pb
@@ -107,9 +107,32 @@ files: {
 
 When enabled, `/api/files/*` is proxied directly to PocketBase without going through SvelteKit auth (files are public per PocketBase's own rules).
 
+## Package entry points
+
+Each subpath carries only what it needs, so importing one helper does not pull
+in the others' dependencies.
+
+| import                          | provides                                                                                      | requires                                |
+| ------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `@velastack/pocketbase`         | `handlePocketbase`, `Client`, the `App.Locals` augmentation, `Models`/`Schemas`/`Collections` | `pocketbase-sveltekit`, `@sveltejs/kit` |
+| `@velastack/pocketbase/api-key` | `generateApiKeySecret`, `hashApiKey`, `verifyApiKey`                                          | nothing (`node:crypto`)                 |
+| `@velastack/pocketbase/form`    | `setDefaultData`, `setPocketbaseErrors`                                                       | `sveltekit-superforms`                  |
+| `@velastack/pocketbase/testing` | `TestContext` and the vitest augmentation                                                     | `@types/supertest`                      |
+
+`sveltekit-superforms` and `@types/supertest` are **optional** peer dependencies:
+install them only if you import the subpath that needs them. Importing
+`/form` without `sveltekit-superforms` is a runtime `ERR_MODULE_NOT_FOUND`, not
+a type error.
+
+Route-id helpers such as `Match<RouteId>` now live in
+[`@velastack/kit`](https://github.com/velastack/kit), which is backend-agnostic.
+
 ## Type sync
 
-In dev mode, schema changes made through the proxied admin UI trigger a regenerate of `.svelte-kit/types/pocketbase/$types.d.ts`. The file declares three types under the `@velastack/pocketbase` module:
+In dev mode, schema changes made through the proxied admin UI invalidate
+`.svelte-kit/types/pocketbase/$types.d.ts`, and `vela dev` regenerates it. This
+requires `vela dev` to be running — under a bare `vite dev` the invalidation is
+skipped, so run `vela sync` after changing collections. The file declares three types under the `@velastack/pocketbase` module:
 
 - `Models` — the read shape of each collection (`pb.collection('leads').getOne(...)`).
 - `Schemas` — a `z.ZodType<...>` per collection, used to validate user-authored zod schemas at the type level.

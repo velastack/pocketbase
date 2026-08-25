@@ -22,7 +22,7 @@ type PocketbaseError = {
 
 export const setPocketbaseErrors = (form: SuperValidated<any, any>, error: unknown) => {
 	let pbError = error as PocketbaseError;
-	Object.keys(pbError.response.data).forEach((key) => {
-		setError(form, key, pbError.response.data[key].message);
+	Object.entries(pbError.response.data).forEach(([key, detail]) => {
+		setError(form, key, detail.message);
 	});
 };
