@@ -42,5 +42,5 @@ jobs:
         run: npm test
 
       - name: Build & validate package
-        # `prepack` runs svelte-package + publint, which is the same gate npm publish would use
+        # `prepack` runs tsc + publint, which is the same gate npm publish would use
         run: npm run prepack
