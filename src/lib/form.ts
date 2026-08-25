@@ -1,4 +1,8 @@
-import { setError, type SuperValidated } from 'sveltekit-superforms';
+// Imported from the /server entry, not the package root. These are server-side
+// helpers for `+page.server.ts` actions, and the root entry re-exports
+// SuperDebug.svelte — which makes this module unloadable by Node whenever a
+// bundler externalises it for SSR.
+import { setError, type SuperValidated } from 'sveltekit-superforms/server';
 
 export const setDefaultData = (form: SuperValidated<any, any>, record: Record<string, unknown>) => {
 	Object.keys(form.data).forEach((key) => {
