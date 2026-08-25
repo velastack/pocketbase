@@ -3,7 +3,13 @@ import PocketBase, { SvelteKitAuthStore, type RecordModel } from 'pocketbase-sve
 import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
-import { proxy, errorPage, protectedRouteRedirect } from '@velastack/kit';
+import {
+	proxy,
+	protectedRouteRedirect,
+	generatedPageResponse,
+	AUTH_PAGES,
+	LEGAL_PAGES
+} from '@velastack/kit';
 import { verifyApiKey } from './api-key.js';
 import { authRefresh } from './auth-refresh.js';
 
@@ -252,6 +258,9 @@ const authorizeApiKey = async (
 	caches.apiKeys[keyId] = { userId, keyId, token };
 	return { userId, keyId, token };
 };
+
+/** Everything a backend project can generate: a static project has no auth. */
+const GENERATED_PAGES = { ...LEGAL_PAGES, ...AUTH_PAGES };
 
 const pbRoutes = [
 	'/api/batch',
@@ -598,45 +607,11 @@ export const handlePocketbase = (config: UserConfig) => {
 			res.headers.set('Set-Cookie', 'pb_auth=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT;');
 		}
 
-		// Display our own 404 page in dev mode with prompts to create the pages
-		if (isDevMode) {
-			if (res.status === 404) {
-				if (event.url.pathname === '/login' || event.url.pathname === '/signup') {
-					return new Response(
-						errorPage(404, 'Run <code>vela enable auth</code> to create this page.'),
-						{
-							status: 404,
-							headers: {
-								'Content-Type': 'text/html'
-							}
-						}
-					);
-				}
-
-				if (event.url.pathname === '/privacy') {
-					return new Response(
-						errorPage(404, 'Run <code>vela legal privacy</code> to create this page.'),
-						{
-							status: 404,
-							headers: {
-								'Content-Type': 'text/html'
-							}
-						}
-					);
-				}
-
-				if (event.url.pathname === '/terms') {
-					return new Response(
-						errorPage(404, 'Run <code>vela legal terms</code> to create this page.'),
-						{
-							status: 404,
-							headers: {
-								'Content-Type': 'text/html'
-							}
-						}
-					);
-				}
-			}
+		// In dev, a 404 on a page `vela` can generate is almost always a page the
+		// user has yet to create, not a broken link. Say which command creates it.
+		if (isDevMode && res.status === 404) {
+			const generated = generatedPageResponse(event.url.pathname, GENERATED_PAGES);
+			if (generated) return generated;
 		}
 
 		return res;
