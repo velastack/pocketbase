@@ -527,18 +527,13 @@ export const handlePocketbase = (config: UserConfig) => {
 			return res;
 		}
 
-		// Handle protected routes
-		const redirect = protectedRouteRedirect({
-			routeId: event.route.id,
-			url: event.url,
-			protectedRoutes: resolvedConfig.auth.protectedRoutes,
-			loginPath: resolvedConfig.auth.loginPath,
-			authenticated: pb.authStore.isValid,
-			clearCookies: ['pb_auth']
-		});
-		if (redirect) return redirect;
-
-		// Handle API key requests after setting up the admin client
+		// Handle API key requests after setting up the admin client, and before
+		// the protected-route redirect. A PocketBase API path can collide with a
+		// dynamic page route (`/api/health` matches `/(app)/[team]/[project]`),
+		// and the redirect keys off `event.route.id`, so an API request with no
+		// session cookie would be bounced to the login page before ever reaching
+		// PocketBase. Without API keys, the same path is proxied above this whole
+		// block, so the two modes must agree.
 		if (
 			resolvedConfig.api.enabled &&
 			resolvedConfig.api.apiKeys.enabled &&
@@ -565,6 +560,17 @@ export const handlePocketbase = (config: UserConfig) => {
 			event.request.headers.set('Authorization', token);
 			return await handleApi(resolvedConfig, { event });
 		}
+
+		// Handle protected routes
+		const redirect = protectedRouteRedirect({
+			routeId: event.route.id,
+			url: event.url,
+			protectedRoutes: resolvedConfig.auth.protectedRoutes,
+			loginPath: resolvedConfig.auth.loginPath,
+			authenticated: pb.authStore.isValid,
+			clearCookies: ['pb_auth']
+		});
+		if (redirect) return redirect;
 
 		if (!caches.meta) {
 			const settings = await admin.settings.getAll();
