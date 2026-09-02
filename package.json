@@ -1,6 +1,6 @@
 {
 	"name": "@velastack/pocketbase",
-	"version": "0.2.3",
+	"version": "0.2.4",
 	"description": "PocketBase bindings for SvelteKit: a hooks.server.ts middleware and type-safe collection schemas.",
 	"license": "MIT",
 	"repository": {
