@@ -19,7 +19,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [20, 22, 24]
+        # No Node 20: vitest 5 needs 22.12+ and .npmrc sets engine-strict=true.
+        node-version: [22, 24]
 
     steps:
       - uses: actions/checkout@v6
