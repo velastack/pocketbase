@@ -52,13 +52,6 @@ declare global {
 			team?: string;
 			/** Only set when the app has a `teams` collection. */
 			role?: string;
-			meta: {
-				appName: string;
-				appURL: string;
-				senderName: string;
-				senderAddress: string;
-				hideControls: boolean;
-			};
 		}
 	}
 }

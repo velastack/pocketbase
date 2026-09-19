@@ -109,14 +109,12 @@ type HandleConfig = Handle & {
  */
 type Caches = {
 	adminCookie: string | null;
-	meta: any;
 	tables: Set<string>;
 	apiKeys: Record<string, { userId: string; keyId: string; token: string }>;
 };
 
 const createCaches = (): Caches => ({
 	adminCookie: null,
-	meta: null,
 	tables: new Set(),
 	apiKeys: {}
 });
@@ -141,12 +139,6 @@ const handleAdmin = async (
 	// Handle refresh token
 	if (strippedPath === '/api/refresh-token') {
 		return authRefresh(config, event);
-	}
-
-	// TODO: generalize this cache busting
-	// clear cached meta on settings patch
-	if (strippedPath === '/api/settings' && event.request.method === 'PATCH') {
-		caches.meta = null;
 	}
 
 	const res = await proxy(urlPath, event);
@@ -572,11 +564,6 @@ export const handlePocketbase = (config: UserConfig) => {
 		});
 		if (redirect) return redirect;
 
-		if (!caches.meta) {
-			const settings = await admin.settings.getAll();
-			caches.meta = settings['meta'];
-		}
-
 		// Load team if we have a team cookie and the teams table
 		if (caches.tables.has('teams') && pb.authStore.isValid) {
 			if (event.request.headers.get('cookie')?.includes('team')) {
@@ -598,13 +585,11 @@ export const handlePocketbase = (config: UserConfig) => {
 			}
 		}
 
-		// Set the locals variables (pb, admin, meta)
+		// Set the locals variables (pb, admin)
 		// @ts-ignore
 		event.locals.pb = pb;
 		// @ts-ignore
 		event.locals.admin = admin;
-		// @ts-ignore
-		event.locals.meta = caches.meta;
 
 		// Handle all other requests
 		const res = await resolve(event);

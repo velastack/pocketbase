@@ -24,6 +24,8 @@ export const handle = handlePocketbase({
 
 The middleware sets `event.locals.pb` (per-request user client) and `event.locals.admin` (superuser client, when credentials are provided).
 
+It does not read the app's name or URL from PocketBase settings. VelaStack apps keep those in code, in `src/lib/site.ts`, and `vela dev` / `vela deploy` copy the name into PocketBase's `meta.appName` for its own emails. Before 0.3.0 the middleware also set `event.locals.meta` from PocketBase's settings; import `site` from `$lib/site` instead.
+
 ## `handlePocketbase(config)`
 
 | Option              | Type             | Default             | Description                                                                                                    |
