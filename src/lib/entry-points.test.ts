@@ -18,9 +18,11 @@ describe('entry points load under plain Node', () => {
 // only SvelteKit's Vite plugin can resolve. /form is therefore Vite-only: plain
 // Node rejects it, and an app has to bundle it for SSR rather than externalise
 // it.
+const FORM_ENTRY = '../../dist/form.js';
+
 describe('/form is Vite-only', () => {
 	it('rejects under plain Node on $app/server', async () => {
-		await expect(import(/* @vite-ignore */ '../../dist/form.js')).rejects.toThrow(
+		await expect(import(/* @vite-ignore */ FORM_ENTRY)).rejects.toThrow(
 			/Cannot find package '\$app'/
 		);
 	});
