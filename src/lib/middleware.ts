@@ -1,4 +1,5 @@
-import type { Handle, RequestEvent } from '@sveltejs/kit';
+import type { RequestEvent } from '@sveltejs/kit';
+import type { Handle } from '@sveltejs/kit/hooks';
 import PocketBase, { SvelteKitAuthStore, type RecordModel } from 'pocketbase-sveltekit';
 import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';

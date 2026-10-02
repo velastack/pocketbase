@@ -1,6 +1,6 @@
 {
 	"name": "@velastack/pocketbase",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"description": "PocketBase bindings for SvelteKit: a hooks.server.ts middleware and type-safe collection schemas.",
 	"license": "MIT",
 	"repository": {
@@ -13,7 +13,7 @@
 	},
 	"type": "module",
 	"engines": {
-		"node": ">=20"
+		"node": ">=22.17"
 	},
 	"scripts": {
 		"build": "rm -rf dist && tsc -p tsconfig.build.json",
@@ -43,6 +43,7 @@
 		},
 		"./form": {
 			"types": "./dist/form.d.ts",
+			"svelte": "./dist/form.js",
 			"default": "./dist/form.js"
 		},
 		"./testing": {
@@ -51,13 +52,13 @@
 		}
 	},
 	"dependencies": {
-		"@velastack/kit": "^0.3.0"
+		"@velastack/kit": "^0.4.0"
 	},
 	"peerDependencies": {
-		"@sveltejs/kit": "^2.0.0",
-		"@types/supertest": "^6.0.0",
+		"@sveltejs/kit": "^3.0.0",
+		"@types/supertest": "^6.0.0 || ^7.0.0",
 		"pocketbase-sveltekit": "^0.28.0",
-		"sveltekit-superforms": "^2.0.0"
+		"sveltekit-superforms": "^3.0.0-next.1"
 	},
 	"peerDependenciesMeta": {
 		"@types/supertest": {
@@ -68,13 +69,13 @@
 		}
 	},
 	"devDependencies": {
-		"@sveltejs/kit": "^2.57.1",
+		"@sveltejs/kit": "^3.0.0",
 		"@types/node": "^26.5.1",
 		"@types/supertest": "^7.2.1",
 		"pocketbase-sveltekit": "^0.28.0",
 		"prettier": "^3.4.2",
 		"publint": "^0.3.2",
-		"sveltekit-superforms": "^2.30.2",
+		"sveltekit-superforms": "3.0.0-next.1",
 		"typescript": "^6.0.3",
 		"vitest": "^5.0.1"
 	},

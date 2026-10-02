@@ -8,23 +8,43 @@ PocketBase bindings for SvelteKit. Provides a `hooks.server.ts` middleware that 
 npm install @velastack/pocketbase
 ```
 
+Requires SvelteKit 3 and Node 22.17 or later. SvelteKit 2 projects stay on
+`@velastack/pocketbase@^0.3`.
+
 ## Quick start
 
 ```ts
 // src/hooks.server.ts
-import { env } from '$env/dynamic/private';
+import {
+	POCKETBASE_URL,
+	POCKETBASE_SUPERUSER_EMAIL,
+	POCKETBASE_SUPERUSER_PASSWORD
+} from '$app/env/private';
 import { handlePocketbase } from '@velastack/pocketbase';
 
 export const handle = handlePocketbase({
-	pocketbaseUrl: env.POCKETBASE_URL,
-	superuserEmail: env.POCKETBASE_SUPERUSER_EMAIL,
-	superuserPassword: env.POCKETBASE_SUPERUSER_PASSWORD
+	pocketbaseUrl: POCKETBASE_URL,
+	superuserEmail: POCKETBASE_SUPERUSER_EMAIL,
+	superuserPassword: POCKETBASE_SUPERUSER_PASSWORD
+});
+```
+
+SvelteKit 3 only exposes variables declared in `src/env.ts`:
+
+```ts
+// src/env.ts
+import { defineEnvVars } from '@sveltejs/kit/env';
+
+export const variables = defineEnvVars({
+	POCKETBASE_URL: { schema: (value) => value ?? '' },
+	POCKETBASE_SUPERUSER_EMAIL: { schema: (value) => value ?? '' },
+	POCKETBASE_SUPERUSER_PASSWORD: { schema: (value) => value ?? '' }
 });
 ```
 
 The middleware sets `event.locals.pb` (per-request user client) and `event.locals.admin` (superuser client, when credentials are provided).
 
-It does not read the app's name or URL from PocketBase settings. VelaStack apps keep those in code, in `src/lib/site.ts`, and `vela dev` / `vela deploy` copy the name into PocketBase's `meta.appName` for its own emails. Before 0.3.0 the middleware also set `event.locals.meta` from PocketBase's settings; import `site` from `$lib/site` instead.
+It does not read the app's name or URL from PocketBase settings. VelaStack apps keep those in code, in `src/lib/site.ts`, and `vela dev` / `vela deploy` copy the name into PocketBase's `meta.appName` for its own emails. Before 0.3.0 the middleware also set `event.locals.meta` from PocketBase's settings; import `site` from `#lib/site.js` instead.
 
 ## `handlePocketbase(config)`
 
@@ -51,7 +71,7 @@ Unauthenticated requests to a protected route are redirected to `${loginPath}?re
 
 ```ts
 handlePocketbase({
-	pocketbaseUrl: env.POCKETBASE_URL,
+	pocketbaseUrl: POCKETBASE_URL,
 	auth: {
 		protectedRoutes: ['/(app)'],
 		loginPath: '/login'
@@ -125,6 +145,14 @@ in the others' dependencies.
 install them only if you import the subpath that needs them. Importing
 `/form` without `sveltekit-superforms` is a runtime `ERR_MODULE_NOT_FOUND`, not
 a type error.
+
+`/form` is **Vite-only**. It needs `sveltekit-superforms@^3`, whose `/server`
+entry imports `$app/server`, a module only SvelteKit's Vite plugin can resolve.
+`./form` carries a `svelte` export condition, so `vite-plugin-svelte` bundles the
+package for SSR rather than leaving it to Node. Plain Node, a vitest run without
+SvelteKit's plugin, or any other non-Vite loader fails on `$app/server`. If an
+unusual install (a pnpm workspace, a transitive-only dependency) still
+externalises it, add `@velastack/pocketbase` to `ssr.noExternal`.
 
 Route-id helpers such as `Match<RouteId>` now live in
 [`@velastack/kit`](https://github.com/velastack/kit), which is backend-agnostic.

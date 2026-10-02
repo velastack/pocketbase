@@ -19,8 +19,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # No Node 20: vitest 5 needs 22.12+ and .npmrc sets engine-strict=true.
-        node-version: [22, 24]
+        # 22.17 is the floor: SvelteKit 3 requires node >=22.17, and .npmrc sets
+        # engine-strict=true.
+        node-version: ['22.17', '24']
 
     steps:
       - uses: actions/checkout@v7
