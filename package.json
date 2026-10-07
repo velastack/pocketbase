@@ -52,7 +52,7 @@
 		}
 	},
 	"dependencies": {
-		"@velastack/kit": "^0.4.0"
+		"@velastack/kit": "^0.4.1"
 	},
 	"peerDependencies": {
 		"@sveltejs/kit": "^3.0.0",
