@@ -9,7 +9,12 @@ const POCKETBASE_URL = 'http://pocketbase.test';
  * protected-route redirect keys off, so tests set it to whatever route SvelteKit
  * would have matched for the path.
  */
-const makeEvent = (path: string, routeId: string | null, headers: HeadersInit = {}) => {
+const makeEvent = (
+	path: string,
+	routeId: string | null,
+	headers: HeadersInit = {},
+	getClientAddress: () => string = () => '127.0.0.1'
+) => {
 	const url = new URL(path, 'http://app.test');
 	const request = new Request(url, { headers });
 
@@ -27,7 +32,7 @@ const makeEvent = (path: string, routeId: string | null, headers: HeadersInit = 
 		cookies: {} as RequestEvent['cookies'],
 		params: {},
 		platform: undefined,
-		getClientAddress: () => '127.0.0.1',
+		getClientAddress,
 		isDataRequest: false,
 		isSubRequest: false,
 		setHeaders: () => {}
@@ -109,5 +114,71 @@ describe('handlePocketbase API routes with API keys enabled', () => {
 		expect(res.headers.get('location')).toBe('/login?redirect=%2Fdashboard');
 		expect(upstream).not.toHaveBeenCalled();
 		expect(resolve).not.toHaveBeenCalled();
+	});
+});
+
+describe('handlePocketbase forwards the visitor address to PocketBase', () => {
+	beforeEach(() => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	/** Run the hook for a page, then have the page call PocketBase as `locals.pb`. */
+	const healthCheckHeaders = async (event: RequestEvent) => {
+		const handle = handlePocketbase({ pocketbaseUrl: POCKETBASE_URL });
+		await runHandle(handle, event);
+		await event.locals.pb.health.check().catch(() => {});
+
+		const call = vi
+			.mocked(event.fetch)
+			.mock.calls.find(([url]) => String(url).endsWith('/api/health'));
+		expect(call).toBeDefined();
+		return new Headers(call?.[1]?.headers);
+	};
+
+	it("sets X-Forwarded-For on the request's client from getClientAddress()", async () => {
+		const event = makeEvent('/', '/', {}, () => '203.0.113.7');
+
+		const headers = await healthCheckHeaders(event);
+
+		expect(headers.get('x-forwarded-for')).toBe('203.0.113.7');
+	});
+
+	it('leaves the header off when there is no client address', async () => {
+		// adapter-node throws when ADDRESS_HEADER is set and the request lacks it.
+		const event = makeEvent('/', '/', {}, () => {
+			throw new Error('Address header was specified but is absent from request');
+		});
+
+		const headers = await healthCheckHeaders(event);
+
+		expect(headers.has('x-forwarded-for')).toBe(false);
+	});
+
+	it('sets it on locals.admin, but not on the superuser login', async () => {
+		const handle = handlePocketbase({
+			pocketbaseUrl: POCKETBASE_URL,
+			superuserEmail: 'admin@example.com',
+			superuserPassword: 'secret'
+		});
+		const event = makeEvent('/', '/', {}, () => '203.0.113.7');
+
+		await runHandle(handle, event);
+		const forwardedFor = (path: string) => {
+			const call = vi
+				.mocked(event.fetch)
+				.mock.calls.find(([url]) => new URL(String(url), 'http://app.test').pathname === path);
+			expect(call).toBeDefined();
+			return new Headers(call?.[1]?.headers).get('x-forwarded-for');
+		};
+
+		// A login that carried each visitor's address would look to PocketBase
+		// like the superuser signing in from somewhere new every time.
+		expect(forwardedFor('/admin/api/collections/_superusers/auth-with-password')).toBeNull();
+		// The tables cache load is the admin client's first call after it.
+		expect(forwardedFor('/admin/api/collections')).toBe('203.0.113.7');
 	});
 });

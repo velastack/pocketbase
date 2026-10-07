@@ -210,7 +210,12 @@ const parseApiKeyHeader = (header: string) => {
 
 const authorizeApiKey = async (
 	config: Config,
-	{ event, pb, caches }: { event: RequestEvent; pb: PocketBase; caches: Caches }
+	{
+		event,
+		pb,
+		caches,
+		address
+	}: { event: RequestEvent; pb: PocketBase; caches: Caches; address: string | null }
 ): Promise<{ userId: string; keyId: string; token: string }> => {
 	const header = event.request.headers.get('Authorization');
 	if (!header) {
@@ -243,9 +248,11 @@ const authorizeApiKey = async (
 		throw new Error('API key is not valid');
 	}
 
-	const impersonateClient = await pb
-		.collection('users')
-		.impersonate(userId, 3600, { fetch: event.fetch });
+	// `impersonate` sends from a client of its own, without `pb.beforeSend`.
+	const impersonateClient = await pb.collection('users').impersonate(userId, 3600, {
+		fetch: event.fetch,
+		...(address ? { headers: { 'X-Forwarded-For': address } } : {})
+	});
 	const token = impersonateClient.authStore.token;
 
 	caches.apiKeys[keyId] = { userId, keyId, token };
@@ -269,6 +276,35 @@ const pbRoutes = [
 
 const isPocketbaseApiRoute = (pathname: string) => {
 	return pbRoutes.some((route) => pathname.startsWith(route));
+};
+
+/**
+ * The visitor's address, or null when there is none to give. `getClientAddress()`
+ * throws while prerendering, and under adapter-node when `ADDRESS_HEADER` is set
+ * but the request lacks it (a health check that skips the proxy).
+ */
+const clientAddress = (event: RequestEvent): string | null => {
+	try {
+		return event.getClientAddress() || null;
+	} catch {
+		return null;
+	}
+};
+
+/**
+ * Every call a per-request client makes reaches PocketBase from this server, so
+ * PocketBase would log and rate-limit the visitor as the server. Tell it who is
+ * asking. PocketBase only reads the header when its trusted proxy settings name
+ * it.
+ */
+const forwardClientAddress = (client: PocketBase, address: string | null) => {
+	if (!address) return;
+	// Chained: `authWithPassword({ autoRefreshThreshold })` installs one too.
+	const previous = client.beforeSend;
+	client.beforeSend = (url, options) => {
+		options.headers = { ...options.headers, 'X-Forwarded-For': address };
+		return previous ? previous(url, options) : { url, options };
+	};
 };
 
 export const handlePocketbase = (config: UserConfig) => {
@@ -350,6 +386,9 @@ export const handlePocketbase = (config: UserConfig) => {
 			event.fetch
 		);
 
+		const address = clientAddress(event);
+		forwardClientAddress(pb, address);
+
 		let shouldClearCookie = false;
 		pb.authStore.loadFromCookie(event.request.headers.get('cookie') || '');
 
@@ -402,6 +441,10 @@ export const handlePocketbase = (config: UserConfig) => {
 				caches.adminCookie = admin.authStore.exportToCookie();
 			}
 		}
+
+		// After authenticating, so the superuser's own login comes from this
+		// server rather than from whichever visitor happened to trigger it.
+		forwardClientAddress(admin, address);
 
 		// Load the tables cache
 		if (!caches.tables.size) {
@@ -537,7 +580,12 @@ export const handlePocketbase = (config: UserConfig) => {
 
 			// Authenticate the user and create the necessary headers for the API request
 			try {
-				const result = await authorizeApiKey(resolvedConfig, { event, pb: admin, caches });
+				const result = await authorizeApiKey(resolvedConfig, {
+					event,
+					pb: admin,
+					caches,
+					address
+				});
 				token = result.token;
 				keyId = result.keyId;
 			} catch {
