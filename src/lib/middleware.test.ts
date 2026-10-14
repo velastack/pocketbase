@@ -117,6 +117,56 @@ describe('handlePocketbase API routes with API keys enabled', () => {
 	});
 });
 
+describe('handlePocketbase plugin webhooks', () => {
+	let upstream: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		upstream = vi.fn(async () => new Response(null, { status: 204 }));
+		vi.stubGlobal('fetch', upstream);
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+
+	const signedPost = (path: string) => {
+		const event = makeEvent(path, null);
+		const request = new Request(event.url, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', 'x-velastack-signature': 't=1,v1=abc' },
+			body: '{"id":"evt_1"}'
+		});
+		return { ...event, request } as RequestEvent;
+	};
+
+	it('proxies the WhatsApp webhook with its body and signature, with the API proxy off', async () => {
+		// the default config: no `api`, as the auth pattern sets it up
+		const handle = handlePocketbase({ pocketbaseUrl: POCKETBASE_URL });
+
+		const { res, resolve } = await runHandle(handle, signedPost('/api/whatsapp/webhook'));
+
+		expect(res.status).toBe(204);
+		expect(resolve).not.toHaveBeenCalled();
+		const [url, init] = upstream.mock.calls[0] as [URL, RequestInit & { headers: Headers }];
+		expect(String(url)).toBe(`${POCKETBASE_URL}/api/whatsapp/webhook`);
+		expect(init.method).toBe('POST');
+		expect(init.headers.get('x-velastack-signature')).toBe('t=1,v1=abc');
+		expect(await new Response(init.body).text()).toBe('{"id":"evt_1"}');
+	});
+
+	it("leaves the app's own routes next to it alone", async () => {
+		const handle = handlePocketbase({ pocketbaseUrl: POCKETBASE_URL });
+
+		for (const path of ['/api/whatsapp/v1/webhook', '/api/whatsapp/webhook/x']) {
+			const { resolve } = await runHandle(handle, signedPost(path));
+			expect(resolve).toHaveBeenCalled();
+		}
+		expect(upstream).not.toHaveBeenCalled();
+	});
+});
+
 describe('handlePocketbase forwards the visitor address to PocketBase', () => {
 	beforeEach(() => {
 		vi.spyOn(console, 'warn').mockImplementation(() => {});

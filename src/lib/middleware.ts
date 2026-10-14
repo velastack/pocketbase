@@ -274,6 +274,15 @@ const pbRoutes = [
 	'/api/health'
 ];
 
+/**
+ * Webhooks that PocketBase plugins receive from other servers. They bring
+ * their own auth (pocketbase-whatsapp checks VelaStack's
+ * X-VelaStack-Signature), and a deployment sends all traffic to SvelteKit, so
+ * they reach PocketBase whatever the `api` config. Exact paths only: the app
+ * may have its own routes next to them.
+ */
+const pluginWebhooks = new Set(['/api/whatsapp/webhook']);
+
 const isPocketbaseApiRoute = (pathname: string) => {
 	return pbRoutes.some((route) => pathname.startsWith(route));
 };
@@ -362,6 +371,10 @@ export const handlePocketbase = (config: UserConfig) => {
 				});
 			}
 			return await handleAdmin(resolvedConfig, { event, caches });
+		}
+
+		if (event.request.method === 'POST' && pluginWebhooks.has(event.url.pathname)) {
+			return await handleApi(resolvedConfig, { event });
 		}
 
 		// We can handle files before auth because we don't need to check if the user is authenticated
