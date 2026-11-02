@@ -44,6 +44,8 @@ export const variables = defineEnvVars({
 
 The middleware sets `event.locals.pb` (per-request user client) and `event.locals.admin` (superuser client, when credentials are provided).
 
+The superuser signs in once per process, straight against `pocketbaseUrl` with the global fetch, and the session is refreshed an hour before it expires. Its calls on `event.locals.admin` carry the visitor's address in `X-Forwarded-For`, but the sign-in itself never does, so PocketBase does not record the superuser as logging in from wherever a visitor happened to be.
+
 It does not read the app's name or URL from PocketBase settings. VelaStack apps keep those in code, in `src/lib/site.ts`, and `vela dev` / `vela deploy` copy the name into PocketBase's `meta.appName` for its own emails. Before 0.3.0 the middleware also set `event.locals.meta` from PocketBase's settings; import `site` from `#lib/site.js` instead.
 
 ## `handlePocketbase(config)`

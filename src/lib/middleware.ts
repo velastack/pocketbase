@@ -1,6 +1,10 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import type { Handle } from '@sveltejs/kit/hooks';
-import PocketBase, { SvelteKitAuthStore, type RecordModel } from 'pocketbase-sveltekit';
+import PocketBase, {
+	SvelteKitAuthStore,
+	isTokenExpired,
+	type RecordModel
+} from 'pocketbase-sveltekit';
 import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
@@ -110,12 +114,15 @@ type HandleConfig = Handle & {
  */
 type Caches = {
 	adminCookie: string | null;
+	/** The superuser sign-in or refresh in flight, so a burst shares one. */
+	adminAuth: Promise<string | null> | null;
 	tables: Set<string>;
 	apiKeys: Record<string, { userId: string; keyId: string; token: string }>;
 };
 
 const createCaches = (): Caches => ({
 	adminCookie: null,
+	adminAuth: null,
 	tables: new Set(),
 	apiKeys: {}
 });
@@ -308,12 +315,77 @@ const clientAddress = (event: RequestEvent): string | null => {
  */
 const forwardClientAddress = (client: PocketBase, address: string | null) => {
 	if (!address) return;
-	// Chained: `authWithPassword({ autoRefreshThreshold })` installs one too.
 	const previous = client.beforeSend;
 	client.beforeSend = (url, options) => {
 		options.headers = { ...options.headers, 'X-Forwarded-For': address };
 		return previous ? previous(url, options) : { url, options };
 	};
+};
+
+/** Refresh the superuser token this long before it expires, in seconds. */
+const SUPERUSER_REFRESH_WINDOW = 60 * 60;
+
+/**
+ * The superuser's cookie for this request, signing in or refreshing when the
+ * cached one is about to run out.
+ *
+ * This runs on a client of its own, pointed straight at PocketBase with the
+ * global fetch. Through `event.fetch` and the admin path the call would re-enter
+ * the app and leave by `handleAdmin`'s proxy, which stamps the visitor's address
+ * on it: PocketBase then records the superuser as signing in from wherever that
+ * visitor happened to be and mails a "login from a new location" alert.
+ *
+ * The cached token used to be renewed only once it had expired, so every day the
+ * first request after expiry signed in again with the password. Refreshing
+ * ahead of time keeps that to one sign-in per process.
+ */
+const superuserCookie = (config: Config, caches: Caches): Promise<string | null> => {
+	const cached = caches.adminCookie;
+	if (cached) {
+		const store = new SvelteKitAuthStore();
+		store.loadFromCookie(cached);
+		if (store.isValid && !isTokenExpired(store.token, SUPERUSER_REFRESH_WINDOW)) {
+			return Promise.resolve(cached);
+		}
+	}
+	if (caches.adminAuth) return caches.adminAuth;
+
+	const auth = (async () => {
+		const direct = new PocketBase(config.pocketbaseUrl, new SvelteKitAuthStore());
+		if (cached) {
+			direct.authStore.loadFromCookie(cached);
+			if (direct.authStore.isValid) {
+				try {
+					await direct.collection('_superusers').authRefresh();
+					return direct.authStore.exportToCookie();
+				} catch {
+					direct.authStore.clear();
+				}
+			}
+		}
+		try {
+			await direct
+				.collection('_superusers')
+				.authWithPassword(config.superuserEmail!, config.superuserPassword!);
+			return direct.authStore.exportToCookie();
+		} catch (e) {
+			console.log('handlePocketbase: error authenticating superuser', e);
+			return null;
+		}
+	})();
+
+	caches.adminAuth = auth;
+	return auth.then(
+		(cookie) => {
+			caches.adminCookie = cookie;
+			caches.adminAuth = null;
+			return cookie;
+		},
+		(e) => {
+			caches.adminAuth = null;
+			throw e;
+		}
+	);
 };
 
 export const handlePocketbase = (config: UserConfig) => {
@@ -422,41 +494,13 @@ export const handlePocketbase = (config: UserConfig) => {
 			event.fetch
 		);
 
-		// Authenticate admin client
+		// Authenticate admin client. The sign-in itself never goes through this
+		// client: see `superuserCookie`.
 		if (resolvedConfig.superuserEmail && resolvedConfig.superuserPassword) {
-			let needsAuth = false;
-
-			if (caches.adminCookie) {
-				admin.authStore.loadFromCookie(caches.adminCookie);
-				if (!admin.authStore.isValid) {
-					try {
-						await admin.collection('_superusers').authRefresh();
-					} catch (e) {
-						admin.authStore.clear();
-						needsAuth = true;
-					}
-				}
-			} else {
-				needsAuth = true;
-			}
-
-			if (needsAuth) {
-				try {
-					await admin
-						.collection('_superusers')
-						.authWithPassword(resolvedConfig.superuserEmail, resolvedConfig.superuserPassword, {
-							autoRefreshThreshold: 30 * 60
-						});
-				} catch (e) {
-					console.log('handlePocketbase: error authenticating superuser', e);
-				}
-
-				caches.adminCookie = admin.authStore.exportToCookie();
-			}
+			const cookie = await superuserCookie(resolvedConfig, caches);
+			if (cookie) admin.authStore.loadFromCookie(cookie);
 		}
 
-		// After authenticating, so the superuser's own login comes from this
-		// server rather than from whichever visitor happened to trigger it.
 		forwardClientAddress(admin, address);
 
 		// Load the tables cache
