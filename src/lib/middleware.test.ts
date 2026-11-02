@@ -207,28 +207,146 @@ describe('handlePocketbase forwards the visitor address to PocketBase', () => {
 
 		expect(headers.has('x-forwarded-for')).toBe(false);
 	});
+});
 
-	it('sets it on locals.admin, but not on the superuser login', async () => {
-		const handle = handlePocketbase({
-			pocketbaseUrl: POCKETBASE_URL,
-			superuserEmail: 'admin@example.com',
-			superuserPassword: 'secret'
+describe('handlePocketbase signs the superuser in directly', () => {
+	const SUPERUSERS = 'pbc_3142635823';
+
+	/** An unsigned JWT with the claims the SDK's auth store reads. */
+	const makeToken = (expiresInSeconds: number) => {
+		const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
+		const exp = Math.floor(Date.now() / 1000) + expiresInSeconds;
+		return `${encode({ alg: 'HS256' })}.${encode({ id: 'su1', collectionId: SUPERUSERS, type: 'auth', exp })}.sig`;
+	};
+
+	const record = {
+		id: 'su1',
+		collectionId: SUPERUSERS,
+		collectionName: '_superusers',
+		email: 'admin@example.com'
+	};
+
+	/**
+	 * PocketBase itself, reached by the global fetch. Each sign-in or refresh
+	 * hands out the next token from `tokens`.
+	 */
+	let upstream: ReturnType<typeof vi.fn>;
+	let tokens: string[];
+
+	const upstreamCalls = (suffix: string) =>
+		upstream.mock.calls.filter(([url]) => String(url).endsWith(suffix));
+
+	beforeEach(() => {
+		tokens = [];
+		upstream = vi.fn(async (input: URL | RequestInfo) => {
+			const url = String(input);
+			if (url.includes('/api/collections/_superusers/auth-')) {
+				const token = tokens.shift() ?? makeToken(24 * 60 * 60);
+				return new Response(JSON.stringify({ token, record }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+			return new Response('{}', { status: 404 });
 		});
+		vi.stubGlobal('fetch', upstream);
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+
+	const config = {
+		pocketbaseUrl: POCKETBASE_URL,
+		superuserEmail: 'admin@example.com',
+		superuserPassword: 'secret'
+	};
+
+	it('signs in against pocketbaseUrl with the global fetch, carrying no visitor address', async () => {
+		const handle = handlePocketbase(config);
 		const event = makeEvent('/', '/', {}, () => '203.0.113.7');
 
 		await runHandle(handle, event);
-		const forwardedFor = (path: string) => {
-			const call = vi
-				.mocked(event.fetch)
-				.mock.calls.find(([url]) => new URL(String(url), 'http://app.test').pathname === path);
-			expect(call).toBeDefined();
-			return new Headers(call?.[1]?.headers).get('x-forwarded-for');
-		};
 
-		// A login that carried each visitor's address would look to PocketBase
-		// like the superuser signing in from somewhere new every time.
-		expect(forwardedFor('/admin/api/collections/_superusers/auth-with-password')).toBeNull();
-		// The tables cache load is the admin client's first call after it.
-		expect(forwardedFor('/admin/api/collections')).toBe('203.0.113.7');
+		// Through `event.fetch` the login would leave by the admin proxy, which
+		// stamps the visitor's address on it: PocketBase would then record the
+		// superuser as signing in from wherever that visitor was and send a
+		// "login from a new location" alert.
+		const [login] = upstreamCalls('/api/collections/_superusers/auth-with-password');
+		expect(String(login?.[0])).toBe(
+			`${POCKETBASE_URL}/api/collections/_superusers/auth-with-password`
+		);
+		expect(new Headers(login?.[1]?.headers).has('x-forwarded-for')).toBe(false);
+		const viaApp = vi
+			.mocked(event.fetch)
+			.mock.calls.filter(([url]) => String(url).includes('/_superusers/auth-'));
+		expect(viaApp).toHaveLength(0);
+
+		// The request's admin client gets the session, and its own calls still
+		// say who is asking.
+		expect(event.locals.admin.authStore.isValid).toBe(true);
+		await event.locals.admin.health.check().catch(() => {});
+		const health = vi
+			.mocked(event.fetch)
+			.mock.calls.find(([url]) => String(url).endsWith('/api/health'));
+		expect(new Headers(health?.[1]?.headers).get('x-forwarded-for')).toBe('203.0.113.7');
+	});
+
+	it('reuses the cached session for later requests', async () => {
+		const handle = handlePocketbase(config);
+
+		await runHandle(
+			handle,
+			makeEvent('/', '/', {}, () => '203.0.113.7')
+		);
+		await runHandle(
+			handle,
+			makeEvent('/', '/', {}, () => '198.51.100.9')
+		);
+
+		expect(upstreamCalls('/auth-with-password')).toHaveLength(1);
+		expect(upstreamCalls('/auth-refresh')).toHaveLength(0);
+	});
+
+	it('refreshes the session before it expires rather than signing in again', async () => {
+		const soon = makeToken(30 * 60);
+		const renewed = makeToken(24 * 60 * 60);
+		tokens = [soon, renewed];
+		const handle = handlePocketbase(config);
+
+		await runHandle(handle, makeEvent('/', '/'));
+		const event = makeEvent('/', '/');
+		await runHandle(handle, event);
+
+		expect(upstreamCalls('/auth-with-password')).toHaveLength(1);
+		const [refresh] = upstreamCalls('/auth-refresh');
+		expect(new Headers(refresh?.[1]?.headers).get('authorization')).toBe(soon);
+		expect(new Headers(refresh?.[1]?.headers).has('x-forwarded-for')).toBe(false);
+		expect(event.locals.admin.authStore.token).toBe(renewed);
+	});
+
+	it('signs in with the password again once the cached session has expired', async () => {
+		tokens = [makeToken(-60)];
+		const handle = handlePocketbase(config);
+
+		await runHandle(handle, makeEvent('/', '/'));
+		const event = makeEvent('/', '/');
+		await runHandle(handle, event);
+
+		expect(upstreamCalls('/auth-refresh')).toHaveLength(0);
+		expect(upstreamCalls('/auth-with-password')).toHaveLength(2);
+		expect(event.locals.admin.authStore.isValid).toBe(true);
+	});
+
+	it('shares one sign-in across a burst of requests', async () => {
+		const handle = handlePocketbase(config);
+		const events = [makeEvent('/', '/'), makeEvent('/', '/'), makeEvent('/', '/')];
+
+		await Promise.all(events.map((event) => runHandle(handle, event)));
+
+		expect(upstreamCalls('/auth-with-password')).toHaveLength(1);
+		for (const event of events) expect(event.locals.admin.authStore.isValid).toBe(true);
 	});
 });
