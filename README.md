@@ -158,16 +158,29 @@ The consent page is yours to write, with the helpers in `@velastack/pocketbase/o
 import { redirect, error } from '@sveltejs/kit';
 import { describeConsent, decideConsent } from '@velastack/pocketbase/oauth';
 
-export const load = async ({ locals, url }) => {
+// Anything wrong with the request is shown, never passed on: registration is
+// open, so redirecting on a client's say-so would let a link to this page send
+// a visitor anywhere.
+const consentRequest = async (locals: App.Locals, url: URL) => {
 	const request = await describeConsent(locals.pb, url.searchParams, url.origin);
-	if (request.ok) return { request }; // show request.client.name and request.redirectHost
-	if (request.redirectTo) redirect(303, request.redirectTo, { external: true });
-	error(400, request.description);
+	if (!request.ok) error(400, request.description);
+	// A token is good at the server it names: only approve your own.
+	if (request.resource !== `${url.origin}/mcp`) error(400, 'Unknown resource');
+	return request;
+};
+
+export const load = async ({ locals, url, setHeaders }) => {
+	const request = await consentRequest(locals, url);
+	setHeaders({ 'content-security-policy': "frame-ancestors 'none'" });
+	return { client: request.client, redirectHost: request.redirectHost, scopes: request.scopes };
 };
 
 export const actions = {
+	// One action for both buttons: a named action's `?/name` would replace the
+	// query, which is the authorization request.
 	default: async ({ locals, url, request }) => {
-		const approve = (await request.formData()).get('decision') === 'approve';
+		await consentRequest(locals, url);
+		const approve = (await request.formData()).get('decision') === 'allow';
 		const result = await decideConsent(locals.pb, url.searchParams, {
 			approve,
 			issuer: url.origin
@@ -179,6 +192,9 @@ export const actions = {
 	}
 };
 ```
+
+Show `client.name` with `redirectHost`: a client names itself, and where the person is sent
+back to is the one thing on the page it cannot make up.
 
 A resource server checks the token it was sent with the superuser client:
 
