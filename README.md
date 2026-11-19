@@ -131,17 +131,100 @@ files: {
 
 When enabled, `/api/files/*` is proxied directly to PocketBase without going through SvelteKit auth (files are public per PocketBase's own rules).
 
+### `oauth`
+
+```ts
+oauth: {
+	enabled?: boolean;      // default: false
+	authorizePath?: string; // default: '/oauth/authorize', the app's sign-in and consent page
+	scopes?: string[];      // advertised as scopes_supported
+}
+```
+
+For a PocketBase with [pocketbase-oauth](https://github.com/velastack/pocketbase-oauth)
+(built into [velabase](https://github.com/velastack/velabase)), which makes it an OAuth 2.1
+authorization server: what lets ChatGPT, Claude and other MCP clients sign in to your app.
+When enabled, the app's origin is the issuer:
+
+- `/.well-known/oauth-authorization-server` serves the server metadata for the origin the
+  request came in on, with `authorization_endpoint` pointing at `authorizePath`;
+- `/api/oauth/register`, `/api/oauth/token` and `/api/oauth/revoke` are proxied to PocketBase,
+  whatever the `api` config.
+
+The consent page is yours to write, with the helpers in `@velastack/pocketbase/oauth`:
+
+```ts
+// src/routes/oauth/authorize/+page.server.ts  (a protected route: the person is signed in)
+import { redirect, error } from '@sveltejs/kit';
+import { describeConsent, decideConsent } from '@velastack/pocketbase/oauth';
+
+// Anything wrong with the request is shown, never passed on: registration is
+// open, so redirecting on a client's say-so would let a link to this page send
+// a visitor anywhere.
+const consentRequest = async (locals: App.Locals, url: URL) => {
+	const request = await describeConsent(locals.pb, url.searchParams, url.origin);
+	if (!request.ok) error(400, request.description);
+	// A token is good at the server it names: only approve your own.
+	if (request.resource !== `${url.origin}/mcp`) error(400, 'Unknown resource');
+	return request;
+};
+
+export const load = async ({ locals, url, setHeaders }) => {
+	const request = await consentRequest(locals, url);
+	setHeaders({ 'content-security-policy': "frame-ancestors 'none'" });
+	return { client: request.client, redirectHost: request.redirectHost, scopes: request.scopes };
+};
+
+export const actions = {
+	// One action for both buttons: a named action's `?/name` would replace the
+	// query, which is the authorization request.
+	default: async ({ locals, url, request }) => {
+		await consentRequest(locals, url);
+		const approve = (await request.formData()).get('decision') === 'allow';
+		const result = await decideConsent(locals.pb, url.searchParams, {
+			approve,
+			issuer: url.origin
+		});
+		if ('redirectTo' in result && result.redirectTo) {
+			redirect(303, result.redirectTo, { external: true });
+		}
+		error(400, 'description' in result ? result.description : 'Invalid request');
+	}
+};
+```
+
+Show `client.name` with `redirectHost`: a client names itself, and where the person is sent
+back to is the one thing on the page it cannot make up.
+
+A resource server checks the token it was sent with the superuser client:
+
+```ts
+import { bearerToken, introspectAccessToken } from '@velastack/pocketbase/oauth';
+
+const token = bearerToken(request.headers.get('authorization'));
+const access = token && (await introspectAccessToken(locals.admin, token));
+// null, or { userId, scopes, resource, clientId, grantId, expiresAt }
+```
+
+`introspectAccessToken` says the token is real, not that it is yours: refuse one whose
+`resource` is not your own URL, and check `scopes` for what the operation needs.
+`listGrants(locals.pb)` and `revokeGrant(locals.pb, id)` back a "connected apps" page.
+
+An OAuth access token does not open PocketBase's own API: API rules know nothing about
+scopes. What it may do is whatever your resource server does for it.
+
 ## Package entry points
 
 Each subpath carries only what it needs, so importing one helper does not pull
 in the others' dependencies.
 
-| import                          | provides                                                                                      | requires                                |
-| ------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------- |
-| `@velastack/pocketbase`         | `handlePocketbase`, `Client`, the `App.Locals` augmentation, `Models`/`Schemas`/`Collections` | `pocketbase-sveltekit`, `@sveltejs/kit` |
-| `@velastack/pocketbase/api-key` | `generateApiKeySecret`, `hashApiKey`, `verifyApiKey`                                          | nothing (`node:crypto`)                 |
-| `@velastack/pocketbase/form`    | `setDefaultData`, `setPocketbaseErrors`                                                       | `sveltekit-superforms`                  |
-| `@velastack/pocketbase/testing` | `TestContext` and the vitest augmentation                                                     | `@types/supertest`                      |
+| import                          | provides                                                                                                | requires                                |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `@velastack/pocketbase`         | `handlePocketbase`, `Client`, the `App.Locals` augmentation, `Models`/`Schemas`/`Collections`           | `pocketbase-sveltekit`, `@sveltejs/kit` |
+| `@velastack/pocketbase/api-key` | `generateApiKeySecret`, `hashApiKey`, `verifyApiKey`                                                    | nothing (`node:crypto`)                 |
+| `@velastack/pocketbase/oauth`   | `describeConsent`, `decideConsent`, `introspectAccessToken`, `bearerToken`, `listGrants`, `revokeGrant` | nothing                                 |
+| `@velastack/pocketbase/form`    | `setDefaultData`, `setPocketbaseErrors`                                                                 | `sveltekit-superforms`                  |
+| `@velastack/pocketbase/testing` | `TestContext` and the vitest augmentation                                                               | `@types/supertest`                      |
 
 `sveltekit-superforms` and `@types/supertest` are **optional** peer dependencies:
 install them only if you import the subpath that needs them. Importing

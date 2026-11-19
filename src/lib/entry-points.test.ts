@@ -6,7 +6,12 @@ import { readFileSync } from 'node:fs';
 // these entry points must therefore be loadable by plain Node. This caught
 // `sveltekit-superforms`' root entry, which re-exports SuperDebug.svelte and
 // made /form unloadable.
-const NODE_ENTRY_POINTS = ['../../dist/index.js', '../../dist/api-key.js', '../../dist/testing.js'];
+const NODE_ENTRY_POINTS = [
+	'../../dist/index.js',
+	'../../dist/api-key.js',
+	'../../dist/oauth.js',
+	'../../dist/testing.js'
+];
 
 describe('entry points load under plain Node', () => {
 	it.each(NODE_ENTRY_POINTS)('%s', async (entry) => {

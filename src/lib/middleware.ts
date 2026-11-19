@@ -74,6 +74,25 @@ const DEFAULT_FILES_CONFIG = {
 	enabled: true
 };
 
+type UserOAuthConfig = {
+	enabled?: boolean;
+	/** Where the app serves the sign-in and consent page. */
+	authorizePath?: string;
+	/** Advertised as `scopes_supported`. PocketBase itself defines no scopes. */
+	scopes?: string[];
+};
+
+type OAuthConfig = {
+	enabled: boolean;
+	authorizePath: string;
+	scopes?: string[];
+};
+
+const DEFAULT_OAUTH_CONFIG: OAuthConfig = {
+	enabled: false,
+	authorizePath: '/oauth/authorize'
+};
+
 type UserConfig = {
 	/**
 	 * Required, but typed as possibly undefined: it normally comes from an env var
@@ -87,6 +106,12 @@ type UserConfig = {
 	auth?: UserAuthConfig;
 	api?: UserApiConfig;
 	files?: UserFilesConfig;
+	/**
+	 * Serve pocketbase-oauth's authorization server on this app's origin: its
+	 * metadata, and the endpoints OAuth clients call. The consent page is the
+	 * app's own (`@velastack/pocketbase/oauth` has what it calls).
+	 */
+	oauth?: UserOAuthConfig;
 };
 
 type Config = {
@@ -97,6 +122,7 @@ type Config = {
 	auth: AuthConfig;
 	api: ApiConfig;
 	files: FilesConfig;
+	oauth: OAuthConfig;
 	root?: string;
 };
 
@@ -290,6 +316,48 @@ const pbRoutes = [
  */
 const pluginWebhooks = new Set(['/api/whatsapp/webhook']);
 
+/**
+ * What an OAuth client calls on pocketbase-oauth. They authenticate
+ * themselves (a client id, PKCE, the token being exchanged), so they reach
+ * PocketBase whatever the `api` config. The consent, introspection and grants
+ * endpoints are not here: the app calls those itself.
+ */
+const oauthClientRoutes = new Set(['/api/oauth/register', '/api/oauth/token', '/api/oauth/revoke']);
+
+const OAUTH_METADATA_PATH = '/.well-known/oauth-authorization-server';
+
+/**
+ * The authorization server metadata, as seen from the origin the request came
+ * in on. PocketBase writes it for its own Application URL; an app may be
+ * served on several origins, and each is its own issuer, so every URL in the
+ * document is moved to this one. The authorization endpoint is the app's page.
+ */
+const handleOAuthMetadata = async (config: Config, { event }: { event: RequestEvent }) => {
+	const res = await fetch(`${config.pocketbaseUrl}${OAUTH_METADATA_PATH}`);
+	if (!res.ok) return new Response('OAuth is not available', { status: 404 });
+
+	const doc = (await res.json()) as Record<string, unknown>;
+	const from = String(doc.issuer ?? '');
+	const origin = event.url.origin;
+	for (const [key, value] of Object.entries(doc)) {
+		if (typeof value === 'string' && from && value.startsWith(from)) {
+			doc[key] = origin + value.slice(from.length);
+		}
+	}
+	doc.issuer = origin;
+	doc.authorization_endpoint = origin + config.oauth.authorizePath;
+	if (config.oauth.scopes?.length) doc.scopes_supported = config.oauth.scopes;
+
+	return new Response(JSON.stringify(doc), {
+		headers: {
+			'content-type': 'application/json',
+			'cache-control': 'public, max-age=300',
+			// clients running in a browser read it too
+			'access-control-allow-origin': '*'
+		}
+	});
+};
+
 const isPocketbaseApiRoute = (pathname: string) => {
 	return pbRoutes.some((route) => pathname.startsWith(route));
 };
@@ -402,6 +470,7 @@ export const handlePocketbase = (config: UserConfig) => {
 		apiKeys: resolvedApiKeys
 	} satisfies ApiConfig;
 	const resolvedFiles = { ...DEFAULT_FILES_CONFIG, ...config.files } satisfies FilesConfig;
+	const resolvedOAuth = { ...DEFAULT_OAUTH_CONFIG, ...config.oauth } satisfies OAuthConfig;
 
 	const { pocketbaseUrl } = config;
 	if (!pocketbaseUrl) {
@@ -414,7 +483,8 @@ export const handlePocketbase = (config: UserConfig) => {
 		pocketbaseUrl,
 		auth: resolvedAuth,
 		api: resolvedApi,
-		files: resolvedFiles
+		files: resolvedFiles,
+		oauth: resolvedOAuth
 	} satisfies Config;
 
 	if (!resolvedConfig.superuserEmail && !resolvedConfig.superuserPassword) {
@@ -447,6 +517,15 @@ export const handlePocketbase = (config: UserConfig) => {
 
 		if (event.request.method === 'POST' && pluginWebhooks.has(event.url.pathname)) {
 			return await handleApi(resolvedConfig, { event });
+		}
+
+		if (resolvedConfig.oauth.enabled) {
+			if (event.url.pathname === OAUTH_METADATA_PATH) {
+				return await handleOAuthMetadata(resolvedConfig, { event });
+			}
+			if (oauthClientRoutes.has(event.url.pathname)) {
+				return await handleApi(resolvedConfig, { event });
+			}
 		}
 
 		// We can handle files before auth because we don't need to check if the user is authenticated

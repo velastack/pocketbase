@@ -1,6 +1,6 @@
 {
 	"name": "@velastack/pocketbase",
-	"version": "0.4.4",
+	"version": "0.5.0",
 	"description": "PocketBase bindings for SvelteKit: a hooks.server.ts middleware and type-safe collection schemas.",
 	"license": "MIT",
 	"repository": {
@@ -40,6 +40,10 @@
 		"./api-key": {
 			"types": "./dist/api-key.d.ts",
 			"default": "./dist/api-key.js"
+		},
+		"./oauth": {
+			"types": "./dist/oauth.d.ts",
+			"default": "./dist/oauth.js"
 		},
 		"./form": {
 			"types": "./dist/form.d.ts",
