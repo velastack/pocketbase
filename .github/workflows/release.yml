@@ -4,9 +4,12 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  # By hand, from the default branch: releases the version the repository is at
+  # and tags it. For when pushing a tag is not possible.
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # to push the tag when started by hand
   id-token: write # required for npm provenance
 
 jobs:
@@ -24,10 +27,32 @@ jobs:
 
       - run: npm ci
 
+      # A pushed tag starts this run with the tag as its ref. Started by hand, the
+      # tag is the version in package.json: it must not exist yet, and is pushed
+      # at the end, once the package is published.
+      - name: Resolve the release tag
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+              echo "Run this from $DEFAULT_BRANCH, not $GITHUB_REF_NAME"
+              exit 1
+            fi
+            TAG="v$(node -p "require('./package.json').version")"
+            if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+              echo "$TAG is already released: bump the version in package.json first"
+              exit 1
+            fi
+          else
+            TAG="$GITHUB_REF_NAME"
+          fi
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+
       - name: Verify tag matches package.json version
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TAG_VERSION="${RELEASE_TAG#v}"
           if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
             echo "Tag $TAG_VERSION does not match package.json version $PKG_VERSION"
             exit 1
@@ -40,3 +65,9 @@ jobs:
 
       - name: Publish to npm
         run: npm publish --access public --provenance
+
+      - name: Push the tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git tag "$RELEASE_TAG"
+          git push origin "$RELEASE_TAG"
