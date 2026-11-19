@@ -350,3 +350,94 @@ describe('handlePocketbase signs the superuser in directly', () => {
 		for (const event of events) expect(event.locals.admin.authStore.isValid).toBe(true);
 	});
 });
+
+describe('handlePocketbase OAuth', () => {
+	let upstream: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		upstream = vi.fn(async (input: URL | RequestInfo) => {
+			const url = input instanceof URL ? input : new URL(String(input));
+			if (url.pathname === '/.well-known/oauth-authorization-server') {
+				// as PocketBase writes it, for its own Application URL
+				return Response.json({
+					issuer: 'https://pocketbase.internal',
+					authorization_endpoint: 'https://pocketbase.internal/oauth/authorize',
+					token_endpoint: 'https://pocketbase.internal/api/oauth/token',
+					registration_endpoint: 'https://pocketbase.internal/api/oauth/register',
+					code_challenge_methods_supported: ['S256'],
+					client_id_metadata_document_supported: true
+				});
+			}
+			return Response.json({ proxied: url.pathname });
+		});
+		vi.stubGlobal('fetch', upstream);
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+
+	const config = {
+		pocketbaseUrl: POCKETBASE_URL,
+		auth: { protectedRoutes: ['/(app)'] },
+		oauth: { enabled: true, authorizePath: '/connect', scopes: ['content:read'] }
+	};
+
+	it('serves the metadata for the origin the request came in on', async () => {
+		const handle = handlePocketbase(config);
+		const event = makeEvent('/.well-known/oauth-authorization-server', null);
+
+		const { res, resolve } = await runHandle(handle, event);
+
+		expect(resolve).not.toHaveBeenCalled();
+		expect(res.headers.get('access-control-allow-origin')).toBe('*');
+		expect(await res.json()).toEqual({
+			issuer: 'http://app.test',
+			authorization_endpoint: 'http://app.test/connect',
+			token_endpoint: 'http://app.test/api/oauth/token',
+			registration_endpoint: 'http://app.test/api/oauth/register',
+			code_challenge_methods_supported: ['S256'],
+			client_id_metadata_document_supported: true,
+			scopes_supported: ['content:read']
+		});
+	});
+
+	it.each(['/api/oauth/register', '/api/oauth/token', '/api/oauth/revoke'])(
+		'proxies %s without a session, with the API off',
+		async (path) => {
+			const handle = handlePocketbase(config);
+			// SvelteKit matches the path to a protected dynamic route
+			const { res, resolve } = await runHandle(
+				handle,
+				makeEvent(path, '/(app)/[team_slug]/[project_slug]')
+			);
+
+			expect(resolve).not.toHaveBeenCalled();
+			expect(await res.json()).toEqual({ proxied: path });
+		}
+	);
+
+	it.each(['/api/oauth/introspect', '/api/oauth/consent', '/api/oauth/grants'])(
+		'keeps %s for the app itself',
+		async (path) => {
+			const handle = handlePocketbase(config);
+			const { resolve } = await runHandle(handle, makeEvent(path, null));
+
+			expect(resolve).toHaveBeenCalled();
+			expect(upstream).not.toHaveBeenCalledWith(
+				expect.objectContaining({ pathname: path }),
+				expect.anything()
+			);
+		}
+	);
+
+	it('serves none of it unless enabled', async () => {
+		const handle = handlePocketbase({ pocketbaseUrl: POCKETBASE_URL });
+		for (const path of ['/.well-known/oauth-authorization-server', '/api/oauth/token']) {
+			const { resolve } = await runHandle(handle, makeEvent(path, null));
+			expect(resolve).toHaveBeenCalled();
+		}
+	});
+});
