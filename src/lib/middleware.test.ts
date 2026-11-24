@@ -209,6 +209,60 @@ describe('handlePocketbase forwards the visitor address to PocketBase', () => {
 	});
 });
 
+describe('handlePocketbase clients do not auto-cancel', () => {
+	beforeEach(() => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	/**
+	 * A fetch that answers on a later tick and rejects if its signal aborts in
+	 * the meantime, as the real one does. The SDK's auto-cancellation aborts a
+	 * pending request when another with the same method and path starts.
+	 */
+	const abortableFetch = vi.fn(
+		(input: URL | RequestInfo, init?: RequestInit) =>
+			new Promise<Response>((resolve, reject) => {
+				const created = String(input).endsWith('/api/collections/songs/records');
+				const abort = () => reject(new DOMException('The request was aborted', 'AbortError'));
+				if (init?.signal?.aborted) return abort();
+				init?.signal?.addEventListener('abort', abort);
+				setTimeout(
+					() =>
+						resolve(
+							created
+								? new Response(JSON.stringify({ id: 'r1' }), {
+										status: 200,
+										headers: { 'content-type': 'application/json' }
+									})
+								: new Response('{}', { status: 404 })
+						),
+					5
+				);
+			})
+	);
+
+	for (const name of ['pb', 'admin'] as const) {
+		it(`lets overlapping requests to one collection all finish on locals.${name}`, async () => {
+			const event = {
+				...makeEvent('/', '/'),
+				fetch: abortableFetch as unknown as typeof fetch
+			} as RequestEvent;
+			await runHandle(handlePocketbase({ pocketbaseUrl: POCKETBASE_URL }), event);
+
+			const client = event.locals[name];
+			const created = await Promise.all(
+				['a', 'b', 'c'].map((title) => client.collection('songs' as never).create({ title }))
+			);
+
+			expect(created).toHaveLength(3);
+		});
+	}
+});
+
 describe('handlePocketbase signs the superuser in directly', () => {
 	const SUPERUSERS = 'pbc_3142635823';
 

@@ -420,6 +420,7 @@ const superuserCookie = (config: Config, caches: Caches): Promise<string | null>
 
 	const auth = (async () => {
 		const direct = new PocketBase(config.pocketbaseUrl, new SvelteKitAuthStore());
+		direct.autoCancellation(false);
 		if (cached) {
 			direct.authStore.loadFromCookie(cached);
 			if (direct.authStore.isValid) {
@@ -549,6 +550,11 @@ export const handlePocketbase = (config: UserConfig) => {
 			'en-US',
 			event.fetch
 		);
+		// The SDK cancels a pending request when another with the same method and
+		// path starts. That is meant for a browser re-issuing a search as the user
+		// types; on a server it aborts all but the last of a `Promise.all` of
+		// `create` calls to one collection.
+		pb.autoCancellation(false);
 
 		const address = clientAddress(event);
 		forwardClientAddress(pb, address);
@@ -572,6 +578,7 @@ export const handlePocketbase = (config: UserConfig) => {
 			'en-US',
 			event.fetch
 		);
+		admin.autoCancellation(false);
 
 		// Authenticate admin client. The sign-in itself never goes through this
 		// client: see `superuserCookie`.
