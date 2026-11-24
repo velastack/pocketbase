@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { RequestEvent } from '@sveltejs/kit';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { handlePocketbase } from './middleware.js';
 
 const POCKETBASE_URL = 'http://pocketbase.test';
@@ -206,6 +209,74 @@ describe('handlePocketbase forwards the visitor address to PocketBase', () => {
 		const headers = await healthCheckHeaders(event);
 
 		expect(headers.has('x-forwarded-for')).toBe(false);
+	});
+});
+
+describe('handlePocketbase invalidates the generated types in dev', () => {
+	let root: string;
+	const paths = () => [
+		join(root, '.svelte-kit', 'pocketbase', '$types.d.ts'),
+		join(root, '.svelte-kit', 'types', 'pocketbase', '$types.d.ts')
+	];
+
+	beforeEach(() => {
+		root = mkdtempSync(join(tmpdir(), 'velastack-pocketbase-'));
+		for (const path of paths()) {
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, 'export {};');
+		}
+		vi.stubEnv('NODE_ENV', 'development');
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response('{}', { status: 200 }))
+		);
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		rmSync(root, { recursive: true, force: true });
+		vi.unstubAllEnvs();
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+
+	const changeCollection = async () => {
+		const handle = handlePocketbase({ pocketbaseUrl: POCKETBASE_URL });
+		handle.config.root = root;
+		const event = makeEvent('/admin/api/collections', null);
+		const request = new Request(event.url, { method: 'POST', body: '{}' });
+		const { res } = await runHandle(handle, { ...event, request } as RequestEvent);
+		expect(res.status).toBe(200);
+	};
+
+	/** `vela dev` leaves this file while its watcher runs. */
+	const startWatcher = () => {
+		const dir = join(root, 'node_modules', '.vite');
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, '_pocketbase_metadata.json'), '{}');
+	};
+
+	it('deletes the file at the new path and at the old one', async () => {
+		startWatcher();
+
+		await changeCollection();
+
+		expect(paths().map((path) => existsSync(path))).toEqual([false, false]);
+	});
+
+	it('does not mind either file being gone already', async () => {
+		startWatcher();
+		rmSync(paths()[1]!);
+
+		await changeCollection();
+
+		expect(paths().map((path) => existsSync(path))).toEqual([false, false]);
+	});
+
+	it('leaves both alone when no `vela dev` is there to regenerate them', async () => {
+		await changeCollection();
+
+		expect(paths().map((path) => existsSync(path))).toEqual([true, true]);
 	});
 });
 

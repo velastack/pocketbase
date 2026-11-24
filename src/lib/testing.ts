@@ -1,8 +1,10 @@
 import type { Agent } from 'supertest';
 
 // Imported by the package's own name, not a relative path, for two reasons:
-// it is the module the generated $types.d.ts augments with `Models`, and it is
-// what pulls the global `App.Locals` augmentation into the test program. After
+// it is the module the generated .svelte-kit/pocketbase/$types.d.ts augments
+// with `Models` (the old .svelte-kit/types/pocketbase/$types.d.ts is still
+// written for projects whose tsconfig has not been updated), and it is what
+// pulls the global `App.Locals` augmentation into the test program. After
 // `vela disable backend` removes hooks.server.ts, this import is the only thing
 // carrying App.Locals into tests.
 // @ts-ignore

@@ -247,9 +247,17 @@ Route-id helpers such as `Match<RouteId>` now live in
 ## Type sync
 
 In dev mode, schema changes made through the proxied admin UI invalidate
-`.svelte-kit/types/pocketbase/$types.d.ts`, and `vela dev` regenerates it. This
+`.svelte-kit/pocketbase/$types.d.ts`, and `vela dev` regenerates it. This
 requires `vela dev` to be running — under a bare `vite dev` the invalidation is
-skipped, so run `vela sync` after changing collections. The file declares three types under the `@velastack/pocketbase` module:
+skipped, so run `vela sync` after changing collections.
+
+The file used to live at `.svelte-kit/types/pocketbase/$types.d.ts`, but
+SvelteKit deletes everything it does not own under `.svelte-kit/types` whenever
+a Vite server starts, so the types vanished after a test run. The old path is
+still written, and invalidated, for projects whose `tsconfig.json` has not been
+updated to include the new one.
+
+The file declares three types under the `@velastack/pocketbase` module:
 
 - `Models` — the read shape of each collection (`pb.collection('leads').getOne(...)`).
 - `Schemas` — a `z.ZodType<...>` per collection, used to validate user-authored zod schemas at the type level.
