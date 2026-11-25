@@ -44,6 +44,8 @@ export const variables = defineEnvVars({
 
 The middleware sets `event.locals.pb` (per-request user client) and `event.locals.admin` (superuser client, when credentials are provided).
 
+Both have the SDK's auto-cancellation turned off. It aborts a pending request when another one to the same endpoint starts, which suits a browser re-running a search as someone types, but on the server it made a `Promise.all` of several `create` calls to one collection fail with "The request was aborted". Overlapping requests on `locals.pb` and `locals.admin` all run to completion.
+
 The superuser signs in once per process, straight against `pocketbaseUrl` with the global fetch, and the session is refreshed an hour before it expires. Its calls on `event.locals.admin` carry the visitor's address in `X-Forwarded-For`, but the sign-in itself never does, so PocketBase does not record the superuser as logging in from wherever a visitor happened to be.
 
 It does not read the app's name or URL from PocketBase settings. VelaStack apps keep those in code, in `src/lib/site.ts`, and `vela dev` / `vela deploy` copy the name into PocketBase's `meta.appName` for its own emails. Before 0.3.0 the middleware also set `event.locals.meta` from PocketBase's settings; import `site` from `#lib/site.js` instead.
@@ -245,9 +247,17 @@ Route-id helpers such as `Match<RouteId>` now live in
 ## Type sync
 
 In dev mode, schema changes made through the proxied admin UI invalidate
-`.svelte-kit/types/pocketbase/$types.d.ts`, and `vela dev` regenerates it. This
+`.svelte-kit/pocketbase/$types.d.ts`, and `vela dev` regenerates it. This
 requires `vela dev` to be running — under a bare `vite dev` the invalidation is
-skipped, so run `vela sync` after changing collections. The file declares three types under the `@velastack/pocketbase` module:
+skipped, so run `vela sync` after changing collections.
+
+The file used to live at `.svelte-kit/types/pocketbase/$types.d.ts`, but
+SvelteKit deletes everything it does not own under `.svelte-kit/types` whenever
+a Vite server starts, so the types vanished after a test run. The old path is
+still written, and invalidated, for projects whose `tsconfig.json` has not been
+updated to include the new one.
+
+The file declares three types under the `@velastack/pocketbase` module:
 
 - `Models` — the read shape of each collection (`pb.collection('leads').getOne(...)`).
 - `Schemas` — a `z.ZodType<...>` per collection, used to validate user-authored zod schemas at the type level.

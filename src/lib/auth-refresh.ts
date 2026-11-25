@@ -7,6 +7,7 @@ type Config = {
 
 export const authRefresh = async (config: Config, event: RequestEvent) => {
 	const pb = new PocketBase(config.adminPath, null, 'en-US', event.fetch);
+	pb.autoCancellation(false);
 	pb.authStore.loadFromCookie(event.request.headers.get('cookie') || '');
 
 	if (pb.authStore.isValid) {

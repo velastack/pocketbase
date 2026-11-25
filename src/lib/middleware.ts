@@ -153,6 +153,12 @@ const createCaches = (): Caches => ({
 	apiKeys: {}
 });
 
+/** Where `vela` writes the generated types: the current path, then the old one. */
+const GENERATED_TYPES_PATHS = [
+	['.svelte-kit', 'pocketbase', '$types.d.ts'],
+	['.svelte-kit', 'types', 'pocketbase', '$types.d.ts']
+];
+
 const handleAdmin = async (
 	config: Config,
 	{ event, caches }: { event: RequestEvent; caches: Caches }
@@ -182,7 +188,13 @@ const handleAdmin = async (
 	// This deletes the file rather than regenerating it: codegen needs ts-morph,
 	// which bundles the whole TypeScript compiler and relies on __filename, so it
 	// must not be reachable from a production server bundle. `vela dev` already
-	// watches this path and regenerates on unlink.
+	// watches the file and regenerates on unlink.
+	//
+	// The file lives at .svelte-kit/pocketbase/$types.d.ts. It used to be under
+	// .svelte-kit/types, where SvelteKit deletes whatever it does not own each
+	// time a Vite server starts. `vela` still writes that old path too, for
+	// projects whose tsconfig has yet to include the new one, and which of the
+	// two a given `vela dev` watches depends on its version, so both go.
 	//
 	// Guarded on vela's dev metadata file, because without that watcher running
 	// there is nothing to regenerate — deleting would strip Models/Collections/
@@ -202,8 +214,8 @@ const handleAdmin = async (
 				);
 
 				if (watcherRunning) {
-					await unlink(resolve(root, '.svelte-kit', 'types', 'pocketbase', '$types.d.ts')).catch(
-						() => {}
+					await Promise.all(
+						GENERATED_TYPES_PATHS.map((path) => unlink(resolve(root, ...path)).catch(() => {}))
 					);
 				}
 			}
@@ -420,6 +432,7 @@ const superuserCookie = (config: Config, caches: Caches): Promise<string | null>
 
 	const auth = (async () => {
 		const direct = new PocketBase(config.pocketbaseUrl, new SvelteKitAuthStore());
+		direct.autoCancellation(false);
 		if (cached) {
 			direct.authStore.loadFromCookie(cached);
 			if (direct.authStore.isValid) {
@@ -549,6 +562,11 @@ export const handlePocketbase = (config: UserConfig) => {
 			'en-US',
 			event.fetch
 		);
+		// The SDK cancels a pending request when another with the same method and
+		// path starts. That is meant for a browser re-issuing a search as the user
+		// types; on a server it aborts all but the last of a `Promise.all` of
+		// `create` calls to one collection.
+		pb.autoCancellation(false);
 
 		const address = clientAddress(event);
 		forwardClientAddress(pb, address);
@@ -572,6 +590,7 @@ export const handlePocketbase = (config: UserConfig) => {
 			'en-US',
 			event.fetch
 		);
+		admin.autoCancellation(false);
 
 		// Authenticate admin client. The sign-in itself never goes through this
 		// client: see `superuserCookie`.
